@@ -18,6 +18,16 @@ chrome.storage.local.get(Object.keys(config), (data) => {
   }
 });
 
+function isAppUrl(url) {
+  if (!url) return false;
+  return (
+    url.includes("localhost") ||
+    url.includes("127.0.0.1") ||
+    url.includes("vercel.app") ||
+    url.includes("onrender.com")
+  );
+}
+
 // Listen for messages from popup or content scripts
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "AUTO_SYNC_CREDENTIALS") {
@@ -66,12 +76,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // Forward video elements events to partner
+  // Forward video elements events to partner (only from app tab)
   if (
     message.type === "VIDEO_EVENT" &&
     config.videoSyncEnabled &&
     socket &&
-    socket.connected
+    socket.connected &&
+    sender.tab &&
+    isAppUrl(sender.tab.url)
   ) {
     socket.emit("extension_video_control", {
       action: message.action,
@@ -81,12 +93,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // Forward tab url changes to partner
+  // Forward tab url changes to partner (only from app tab)
   if (
     message.type === "URL_EVENT" &&
     config.urlSyncEnabled &&
     socket &&
-    socket.connected
+    socket.connected &&
+    sender.tab &&
+    isAppUrl(sender.tab.url)
   ) {
     socket.emit("extension_url_change", {
       url: message.url,
@@ -96,16 +110,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-// Track URL updates to notify partner when active tab URL changes on streaming sites
+// Track URL updates to notify partner when active tab URL changes on streaming sites (only for app tab)
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (
     config.urlSyncEnabled &&
     changeInfo.status === "complete" &&
     tab.active &&
     socket &&
-    socket.connected
+    socket.connected &&
+    isAppUrl(tab.url)
   ) {
-    // Avoid circular triggers and client dashboard URLs
     const urlStr = tab.url || "";
     if (
       urlStr &&
