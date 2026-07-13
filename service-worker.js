@@ -127,7 +127,7 @@ function connectSocket() {
   try {
     socket = io(config.serverUrl, {
       auth: { token: config.token },
-      transports: ["websocket"],
+      transports: ["polling", "websocket"],
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
