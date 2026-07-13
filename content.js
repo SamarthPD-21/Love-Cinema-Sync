@@ -1,14 +1,18 @@
 // content.js
 console.log("Love Cinema Sync extension content script loaded");
 
-// 1. Auto-sync credentials from the client app page
-if (
+// 1. Auto-sync credentials from the client app page (local & production domains)
+const isAppDomain =
   window.location.host.includes("localhost") ||
-  window.location.host.includes("127.0.0.1")
-) {
+  window.location.host.includes("127.0.0.1") ||
+  window.location.host.includes("vercel.app") ||
+  window.location.host.includes("onrender.com");
+
+if (isAppDomain) {
   document.body.setAttribute("data-love-sync-extension-active", "true");
   const token = localStorage.getItem("home-token");
   const userStr = localStorage.getItem("home-user");
+  const serverUrl = localStorage.getItem("home-socket-url");
   if (token && userStr) {
     try {
       const user = JSON.parse(userStr);
@@ -17,6 +21,7 @@ if (
           type: "AUTO_SYNC_CREDENTIALS",
           token: token,
           relationshipId: user.relationshipId,
+          serverUrl: serverUrl || undefined,
         });
       }
     } catch (e) {

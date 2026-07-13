@@ -21,13 +21,19 @@ chrome.storage.local.get(Object.keys(config), (data) => {
 // Listen for messages from popup or content scripts
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "AUTO_SYNC_CREDENTIALS") {
-    const { token, relationshipId } = message;
+    const { token, relationshipId, serverUrl } = message;
     if (token && relationshipId) {
       let needsConnect = false;
-      if (token !== config.token || relationshipId !== config.relationshipId) {
+      const targetServerUrl = serverUrl || config.serverUrl;
+      if (
+        token !== config.token ||
+        relationshipId !== config.relationshipId ||
+        targetServerUrl !== config.serverUrl
+      ) {
         config.token = token;
         config.relationshipId = relationshipId;
-        chrome.storage.local.set({ token, relationshipId });
+        config.serverUrl = targetServerUrl;
+        chrome.storage.local.set({ token, relationshipId, serverUrl: targetServerUrl });
         needsConnect = true;
       }
       if (!socket || !socket.connected) {
@@ -130,6 +136,72 @@ function connectSocket() {
     socket.on("connect", () => {
       console.log("Connected to Love server via extension");
       socket.emit("join_cinema", { relationshipId: config.relationshipId });
+    });
+
+    socket.on("cinema_resolve_link_request", async (data) => {
+      console.log("Extension received resolve request for:", data);
+      const searchUrl = `https://1hd.art/search?keyword=${encodeURIComponent(data.title)}`;
+      
+      try {
+        const res = await fetch(searchUrl);
+        if (!res.ok) throw new Error("Status: " + res.status);
+        const html = await res.text();
+        
+        // Parse search results using regex
+        const items = html.split('<div class="item-film">').slice(1);
+        const results = [];
+        const linkRegex = /<a href="([^"]+)" title="([^"]+)"/;
+        const typeRegex = /<span class="item">([^<]+)<\/span>/;
+
+        items.forEach((item) => {
+          const linkMatch = linkRegex.exec(item);
+          const typeMatch = typeRegex.exec(item);
+          if (linkMatch) {
+            results.push({
+              href: linkMatch[1],
+              title: linkMatch[2],
+              type: typeMatch ? typeMatch[1].trim() : ''
+            });
+          }
+        });
+
+        if (results.length === 0) {
+          console.log("Extension: No results found for:", data.title);
+          return;
+        }
+
+        // Matching logic
+        const targetType = data.type === "movie" ? "movie" : "tv";
+        const normalize = (t) => t.toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
+        const normalizedTarget = normalize(data.title);
+
+        let bestMatch = results.find((r) => {
+          const typeOk = r.type.toLowerCase().includes(targetType);
+          const titleOk = normalize(r.title) === normalizedTarget;
+          return typeOk && titleOk;
+        });
+
+        if (!bestMatch) {
+          bestMatch = results.find((r) => normalize(r.title) === normalizedTarget);
+        }
+        if (!bestMatch) {
+          bestMatch = results.find((r) => r.type.toLowerCase().includes(targetType));
+        }
+        if (!bestMatch) {
+          bestMatch = results[0];
+        }
+
+        console.log("Extension: Resolved link:", bestMatch.href);
+        
+        // Emit response back to server
+        socket.emit("cinema_resolve_link_response", {
+          movieId: data.movieId,
+          watchLink: bestMatch.href,
+        });
+
+      } catch (err) {
+        console.error("Extension: Failed to resolve search link:", err);
+      }
     });
 
     socket.on("disconnect", () => {
