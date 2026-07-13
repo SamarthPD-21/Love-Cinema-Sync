@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root {
+        --bg-gradient-start: #0f0c1b;
+        --bg-gradient-end: #050209;
+        --panel-bg: rgba(255, 255, 255, 0.04);
+        --panel-border: rgba(255, 255, 255, 0.08);
+        --accent: #f59e0b; /* Amber */
+        --accent-hover: #d97706;
+        --text: #f3f4f6;
+        --text-muted: #9ca3af;
+        --emerald: #10b981;
+        --rose: #f43f5e;
+      }
+
+      body {
+        width: 320px;
+        margin: 0;
+        padding: 16px;
+        background: linear-gradient(135deg, var(--bg-gradient-start), var(--bg-gradient-end));
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        box-sizing: border-box;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+        border-bottom: 1px solid var(--panel-border);
+        padding-bottom: 12px;
+      }
+
+      h1 {
+        font-size: 16px;
+        font-weight: 800;
+        margin: 0;
+        background: linear-gradient(to right, #f59e0b, #f97316);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        letter-spacing: 0.5px;
+      }
+
+      .status-badge {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        font-weight: 700;
+        background: rgba(255, 255, 255, 0.05);
+        padding: 4px 10px;
+        border-radius: 20px;
+        border: 1px solid var(--panel-border);
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background-color: var(--text-muted);
+      }
+
+      .dot.connected {
+        background-color: var(--emerald);
+        box-shadow: 0 0 8px var(--emerald);
+        animation: pulse 2s infinite;
+      }
+
+      .dot.disconnected {
+        background-color: var(--rose);
+      }
+
+      @keyframes pulse {
+        0% { opacity: 0.5; }
+        50% { opacity: 1; }
+        100% { opacity: 0.5; }
+      }
+
+      .card {
+        background: var(--panel-bg);
+        border: 1px solid var(--panel-border);
+        border-radius: 16px;
+        padding: 12px 14px;
+        margin-bottom: 12px;
+        backdrop-filter: blur(8px);
+      }
+
+      .setting-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+
+      .setting-item:last-child {
+        margin-bottom: 0;
+      }
+
+      .setting-label {
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .setting-desc {
+        font-size: 10px;
+        color: var(--text-muted);
+        margin-top: 2px;
+      }
+
+      /* Custom Switch */
+      .switch {
+        position: relative;
+        display: inline-block;
+        width: 36px;
+        height: 20px;
+      }
+
+      .switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+
+      .slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: rgba(255, 255, 255, 0.15);
+        transition: 0.2s;
+        border-radius: 20px;
+      }
+
+      .slider:before {
+        position: absolute;
+        content: "";
+        height: 14px;
+        width: 14px;
+        left: 3px;
+        bottom: 3px;
+        background-color: white;
+        transition: 0.2s;
+        border-radius: 50%;
+      }
+
+      input:checked + .slider {
+        background-color: var(--accent);
+      }
+
+      input:checked + .slider:before {
+        transform: translateX(16px);
+      }
+
+      /* Manual config form toggle */
+      .expand-btn {
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        font-size: 11px;
+        cursor: pointer;
+        padding: 0;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        width: 100%;
+        justify-content: center;
+        margin-top: 8px;
+      }
+
+      .expand-btn:hover {
+        color: var(--text);
+      }
+
+      .form-group {
+        margin-bottom: 10px;
+      }
+
+      .form-group label {
+        display: block;
+        font-size: 11px;
+        font-weight: 700;
+        margin-bottom: 4px;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .form-group input {
+        width: 100%;
+        padding: 8px 10px;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid var(--panel-border);
+        border-radius: 8px;
+        color: white;
+        font-size: 12px;
+        box-sizing: border-box;
+      }
+
+      .form-group input:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      button.save-btn {
+        width: 100%;
+        padding: 8px;
+        background: var(--accent);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-weight: 700;
+        font-size: 12px;
+        cursor: pointer;
+        transition: 0.2s;
+        margin-top: 6px;
+      }
+
+      button.save-btn:hover {
+        background: var(--accent-hover);
+      }
+
+      .toast-msg {
+        font-size: 11px;
+        text-align: center;
+        color: var(--emerald);
+        margin-top: 6px;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Love Sync Cinema</h1>
+      <div id="statusBadge" class="status-badge">
+        <span id="statusDot" class="dot disconnected"></span>
+        <span id="statusText">Connecting</span>
+      </div>
+    </header>
+
+    <div class="card">
+      <div class="setting-item">
+        <div>
+          <span class="setting-label">Sync Tab URL</span>
+          <div class="setting-desc">Auto-follow partner's streaming URL</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="urlSyncToggle" />
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-item" style="margin-top: 14px;">
+        <div>
+          <span class="setting-label">Sync Video Player</span>
+          <div class="setting-desc">Sync play, pause, seek events</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="videoSyncToggle" />
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <button id="toggleConfigBtn" class="expand-btn">🔧 Show Manual Config</button>
+
+    <div id="manualConfigForm" class="card hidden">
+      <div class="form-group">
+        <label>Server URL</label>
+        <input type="text" id="serverUrlInput" placeholder="http://localhost:5000" />
+      </div>
+      <div class="form-group">
+        <label>Relationship ID</label>
+        <input type="text" id="relIdInput" />
+      </div>
+      <div class="form-group">
+        <label>Auth Token</label>
+        <input type="text" id="tokenInput" />
+      </div>
+      <button id="saveConfigBtn" class="save-btn">Save Configuration</button>
+      <div id="toastMessage" class="toast-msg hidden">Credentials Saved!</div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
