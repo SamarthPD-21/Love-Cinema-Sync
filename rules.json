@@ -45,7 +45,12 @@
     },
     "condition": {
       "urlFilter": "*",
-      "resourceTypes": ["xmlhttprequest", "media"]
+      "resourceTypes": ["xmlhttprequest", "media"],
+      "excludedRequestDomains": [
+        "love-x3zc.onrender.com",
+        "love-weld-seven.vercel.app",
+        "localhost"
+      ]
     }
   }
 ]
