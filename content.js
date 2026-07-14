@@ -1,6 +1,24 @@
 // content.js
 console.log("Love Cinema Sync extension content script loaded");
 
+// Helper to safely send messages to the extension background script without throwing uncaught context invalidation errors
+function safeSendMessage(message) {
+  try {
+    if (typeof chrome !== "undefined" && chrome?.runtime?.id) {
+      chrome.runtime.sendMessage(message, () => {
+        // Consume runtime.lastError to suppress chrome's internal warnings
+        if (chrome.runtime.lastError) {
+          // Extension might be reloading or disabled
+        }
+      });
+      return true;
+    }
+  } catch (e) {
+    // Context is invalidated, fail silently or with a debug log
+  }
+  return false;
+}
+
 // 1. Auto-sync credentials from the client app page (local & production domains)
 const isAppDomain =
   window.location.host.includes("localhost") ||
@@ -10,24 +28,38 @@ const isAppDomain =
 
 if (isAppDomain) {
   document.body.setAttribute("data-love-sync-extension-active", "true");
-  const token = localStorage.getItem("home-token");
-  const userStr = localStorage.getItem("home-user");
-  const serverUrl = localStorage.getItem("home-socket-url");
-  if (token && userStr) {
-    try {
-      const user = JSON.parse(userStr);
-      if (user.relationshipId) {
-        chrome.runtime.sendMessage({
-          type: "AUTO_SYNC_CREDENTIALS",
-          token: token,
-          relationshipId: user.relationshipId,
-          serverUrl: serverUrl || undefined,
-        });
+  
+  const syncCredentials = () => {
+    const token = localStorage.getItem("home-token");
+    const userStr = localStorage.getItem("home-user");
+    const serverUrl = localStorage.getItem("home-socket-url");
+    if (token && userStr) {
+      try {
+        const user = JSON.parse(userStr);
+        if (user.relationshipId) {
+          safeSendMessage({
+            type: "AUTO_SYNC_CREDENTIALS",
+            token: token,
+            relationshipId: user.relationshipId,
+            serverUrl: serverUrl || undefined,
+          });
+        }
+      } catch (e) {
+        console.warn("Love Sync: Failed to parse user credentials", e);
       }
-    } catch (e) {
-      console.warn("Love Sync: Failed to parse user credentials", e);
     }
-  }
+  };
+
+  syncCredentials();
+
+  // Periodic keep-alive ping to prevent the background service worker from going idle/suspended
+  const keepAliveInterval = setInterval(() => {
+    const success = safeSendMessage({ type: "KEEP_ALIVE" });
+    if (!success) {
+      clearInterval(keepAliveInterval);
+      console.log("Love Sync: Stopped keep-alive loops as the extension context was invalidated.");
+    }
+  }, 20000);
 }
 
 // 1.5. Maximize video player to cover full iframe viewport
@@ -93,29 +125,29 @@ const seenVideos = new WeakSet();
 function setupVideoListeners(video) {
   video.addEventListener("play", () => {
     if (isRespondingToPartner) return;
-    chrome.runtime.sendMessage({
+    safeSendMessage({
       type: "VIDEO_EVENT",
       action: "play",
       time: video.currentTime,
-    }).catch(() => {});
+    });
   });
 
   video.addEventListener("pause", () => {
     if (isRespondingToPartner) return;
-    chrome.runtime.sendMessage({
+    safeSendMessage({
       type: "VIDEO_EVENT",
       action: "pause",
       time: video.currentTime,
-    }).catch(() => {});
+    });
   });
 
   video.addEventListener("seeked", () => {
     if (isRespondingToPartner) return;
-    chrome.runtime.sendMessage({
+    safeSendMessage({
       type: "VIDEO_EVENT",
       action: "seek",
       time: video.currentTime,
-    }).catch(() => {});
+    });
   });
 }
 

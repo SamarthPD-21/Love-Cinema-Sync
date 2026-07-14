@@ -30,6 +30,15 @@ function isAppUrl(url) {
 
 // Listen for messages from popup or content scripts
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "KEEP_ALIVE") {
+    if (config.token && config.relationshipId && (!socket || !socket.connected)) {
+      console.log("Extension Keepalive: Socket is disconnected, triggering automatic reconnection...");
+      connectSocket();
+    }
+    sendResponse({ success: true, connected: socket ? socket.connected : false });
+    return true;
+  }
+
   if (message.type === "AUTO_SYNC_CREDENTIALS") {
     const { token, relationshipId, serverUrl } = message;
     if (token && relationshipId) {
