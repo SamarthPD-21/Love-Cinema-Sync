@@ -150,7 +150,7 @@ function connectSocket() {
   try {
     socket = io(config.serverUrl, {
       auth: { token: config.token },
-      transports: ["polling", "websocket"],
+      transports: ["websocket"],
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
@@ -159,6 +159,10 @@ function connectSocket() {
     socket.on("connect", () => {
       console.log("Connected to Love server via extension");
       socket.emit("join_cinema", { relationshipId: config.relationshipId });
+    });
+
+    socket.on("connect_error", (err) => {
+      console.error("Love server connection error in extension:", err);
     });
 
     socket.on("cinema_resolve_link_request", async (data) => {
