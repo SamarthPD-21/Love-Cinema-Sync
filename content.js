@@ -32,7 +32,7 @@ if (isAppDomain) {
   const syncCredentials = () => {
     const token = localStorage.getItem("home-token");
     const userStr = localStorage.getItem("home-user");
-    const serverUrl = localStorage.getItem("home-socket-url");
+    const serverUrl = document.body.getAttribute("data-socket-url") || localStorage.getItem("home-socket-url");
     if (token && userStr) {
       try {
         const user = JSON.parse(userStr);
@@ -54,6 +54,9 @@ if (isAppDomain) {
 
   // Periodic keep-alive ping to prevent the background service worker from going idle/suspended
   const keepAliveInterval = setInterval(() => {
+    // Keep credentials synchronized continuously
+    syncCredentials();
+    
     const success = safeSendMessage({ type: "KEEP_ALIVE" });
     if (!success) {
       clearInterval(keepAliveInterval);
