@@ -94,7 +94,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.tabs.query({}, (tabs) => {
       tabs.forEach((tab) => {
         const url = tab.url || "";
-        if (url.includes("/lounge") || url.includes("1hd.art")) {
+        if (url.includes("/lounge") || url.includes("/cinema") || url.includes("1hd.art")) {
           chrome.webNavigation.getAllFrames({ tabId: tab.id }, (frames) => {
             if (frames) {
               frames.forEach((frame) => {
@@ -274,7 +274,7 @@ function connectSocket() {
       const tabs = await chrome.tabs.query({});
       tabs.forEach((tab) => {
         const url = tab.url || "";
-        if (url.includes("/lounge")) {
+        if (url.includes("/lounge") || url.includes("/cinema")) {
           chrome.webNavigation.getAllFrames({ tabId: tab.id }, (frames) => {
             if (frames) {
               frames.forEach((frame) => {
@@ -293,7 +293,7 @@ function connectSocket() {
       const tabs = await chrome.tabs.query({});
       tabs.forEach((tab) => {
         const url = tab.url || "";
-        if (url.includes("/lounge") || url.includes("1hd.art")) {
+        if (url.includes("/lounge") || url.includes("/cinema") || url.includes("1hd.art")) {
           chrome.webNavigation.getAllFrames({ tabId: tab.id }, (frames) => {
             if (frames) {
               frames.forEach((frame) => {
@@ -314,7 +314,7 @@ function connectSocket() {
       const tabs = await chrome.tabs.query({});
       tabs.forEach(async (tab) => {
         const url = tab.url || "";
-        if (url.includes("/lounge") && tab.url !== data.url) {
+        if ((url.includes("/lounge") || url.includes("/cinema")) && tab.url !== data.url) {
           await chrome.tabs.update(tab.id, { url: data.url });
         }
       });
@@ -326,7 +326,7 @@ function connectSocket() {
       const tabs = await chrome.tabs.query({});
       tabs.forEach((tab) => {
         const url = tab.url || "";
-        if (url.includes("/lounge")) {
+        if (url.includes("/lounge") || url.includes("/cinema")) {
           chrome.webNavigation.getAllFrames({ tabId: tab.id }, (frames) => {
             if (frames) {
               frames.forEach((frame) => {
