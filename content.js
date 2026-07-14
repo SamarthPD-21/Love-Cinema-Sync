@@ -1,20 +1,25 @@
 // content.js
 console.log("Love Cinema Sync extension content script loaded");
 
+let isExtensionEnabled = true;
+let isUrlSyncEnabled = true;
+let isVideoSyncEnabled = true;
+
 // Helper to safely send messages to the extension background script without throwing uncaught context invalidation errors
-function safeSendMessage(message) {
+function safeSendMessage(message, callback) {
   try {
     if (typeof chrome !== "undefined" && chrome?.runtime?.id) {
-      chrome.runtime.sendMessage(message, () => {
-        // Consume runtime.lastError to suppress chrome's internal warnings
+      chrome.runtime.sendMessage(message, (res) => {
         if (chrome.runtime.lastError) {
           // Extension might be reloading or disabled
+        } else if (callback) {
+          callback(res);
         }
       });
       return true;
     }
   } catch (e) {
-    // Context is invalidated, fail silently or with a debug log
+    // Context is invalidated
   }
   return false;
 }
@@ -26,46 +31,67 @@ const isAppDomain =
   window.location.host.includes("vercel.app") ||
   window.location.host.includes("onrender.com");
 
-if (isAppDomain) {
-  document.body.setAttribute("data-love-sync-extension-active", "true");
-  
-  const syncCredentials = () => {
-    const token = localStorage.getItem("home-token");
-    const userStr = localStorage.getItem("home-user");
-    const serverUrl = document.body.getAttribute("data-socket-url") || localStorage.getItem("home-socket-url");
-    if (token && userStr) {
-      try {
-        const user = JSON.parse(userStr);
-        if (user.relationshipId) {
-          safeSendMessage({
-            type: "AUTO_SYNC_CREDENTIALS",
-            token: token,
-            relationshipId: user.relationshipId,
-            serverUrl: serverUrl || undefined,
-          });
-        }
-      } catch (e) {
-        console.warn("Love Sync: Failed to parse user credentials", e);
+const syncCredentials = () => {
+  const token = localStorage.getItem("home-token");
+  const userStr = localStorage.getItem("home-user");
+  const serverUrl = document.body.getAttribute("data-socket-url") || localStorage.getItem("home-socket-url");
+  if (token && userStr) {
+    try {
+      const user = JSON.parse(userStr);
+      if (user.relationshipId) {
+        safeSendMessage({
+          type: "AUTO_SYNC_CREDENTIALS",
+          token: token,
+          relationshipId: user.relationshipId,
+          serverUrl: serverUrl || undefined,
+        });
       }
+    } catch (e) {
+      console.warn("Love Sync: Failed to parse user credentials", e);
     }
-  };
+  }
+};
 
+function syncExtensionConfig() {
+  safeSendMessage({ type: "GET_CONNECTION_STATUS" }, (response) => {
+    if (response && response.config) {
+      isExtensionEnabled = response.config.extensionEnabled !== false;
+      isUrlSyncEnabled = response.config.urlSyncEnabled !== false;
+      isVideoSyncEnabled = response.config.videoSyncEnabled !== false;
+
+      // Update page active attribute
+      if (isAppDomain) {
+        if (isExtensionEnabled) {
+          document.body.setAttribute("data-love-sync-extension-active", "true");
+        } else {
+          document.body.removeAttribute("data-love-sync-extension-active");
+        }
+      }
+
+      // Update iframe layout overrides dynamically
+      updateIframeStyles();
+    }
+  });
+}
+
+if (isAppDomain) {
+  // Sync credentials on load
   syncCredentials();
-
-  // Periodic keep-alive ping to prevent the background service worker from going idle/suspended
+  
+  // Periodic keep-alive ping and credentials sync
   const keepAliveInterval = setInterval(() => {
-    // Keep credentials synchronized continuously
     syncCredentials();
+    syncExtensionConfig();
     
     const success = safeSendMessage({ type: "KEEP_ALIVE" });
     if (!success) {
       clearInterval(keepAliveInterval);
       console.log("Love Sync: Stopped keep-alive loops as the extension context was invalidated.");
     }
-  }, 20000);
+  }, 10000); // Check status every 10s for responsive updates
 }
 
-// 1.5. Maximize video player to cover full iframe viewport
+// 1.5. Maximize video player to cover full iframe viewport (Dynamic CSS Injection)
 const isPlayerDomain = 
   window.location.host.includes("1hd.art") || 
   window.location.host.includes("rabbitstream") || 
@@ -77,49 +103,67 @@ const isPlayerDomain =
   window.location.host.includes("stream") ||
   window.location.host.includes("play");
 
-if (window !== window.top || isPlayerDomain) {
-  const style = document.createElement("style");
-  style.textContent = `
-    html, body {
-      overflow: hidden !important;
-      width: 100% !important;
-      height: 100% !important;
-      margin: 0 !important;
-      padding: 0 !important;
-      background: black !important;
+function updateIframeStyles() {
+  const existing = document.getElementById("love-sync-iframe-styles");
+  
+  if (!isExtensionEnabled) {
+    if (existing) {
+      existing.remove();
+      console.log("Love Sync: Disabled state detected. Removed iframe maximization styles.");
     }
-    iframe#iframe-embed, 
-    .watch-play iframe,
-    iframe[src*="embed"], 
-    iframe[src*="player"],
-    #player,
-    .player-container,
-    video,
-    .jwplayer,
-    .vjs-tech,
-    #player-holder,
-    .watching-player {
-      position: fixed !important;
-      top: 0 !important;
-      left: 0 !important;
-      width: 100vw !important;
-      height: 100vh !important;
-      z-index: 9999999 !important;
-      background: black !important;
-      border: none !important;
-      margin: 0 !important;
-      padding: 0 !important;
-    }
-    header, footer, .sidebar, #header, #footer, .comment-section, .related-movies, .breadcrumbs, .alert-ad, .ad-box, .banner-ad, #sidebar {
-      display: none !important;
-      visibility: hidden !important;
-      opacity: 0 !important;
-      pointer-events: none !important;
-    }
-  `;
-  document.documentElement.appendChild(style);
-  console.log("Love Sync: Applied iframe player maximization styles to frame: " + window.location.host);
+    return;
+  }
+
+  if ((window !== window.top || isPlayerDomain) && !existing) {
+    const style = document.createElement("style");
+    style.id = "love-sync-iframe-styles";
+    style.textContent = `
+      html, body {
+        overflow: hidden !important;
+        width: 100% !important;
+        height: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: black !important;
+      }
+      iframe#iframe-embed, 
+      .watch-play iframe,
+      iframe[src*="embed"], 
+      iframe[src*="player"],
+      #player,
+      .player-container,
+      video,
+      .jwplayer,
+      .vjs-tech,
+      #player-holder,
+      .watching-player {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        z-index: 9999999 !important;
+        background: black !important;
+        border: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+      header, footer, .sidebar, #header, #footer, .comment-section, .related-movies, .breadcrumbs, .alert-ad, .ad-box, .banner-ad, #sidebar {
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+    `;
+    document.documentElement.appendChild(style);
+    console.log("Love Sync: Applied iframe player maximization styles to frame: " + window.location.host);
+  }
 }
+
+// Initial config check
+syncExtensionConfig();
+// Regular status sync checks in case toggled via popup
+setInterval(syncExtensionConfig, 3000);
 
 // 2. Video Sync Logic
 let isRespondingToPartner = false;
@@ -127,7 +171,7 @@ const seenVideos = new WeakSet();
 
 function setupVideoListeners(video) {
   video.addEventListener("play", () => {
-    if (isRespondingToPartner) return;
+    if (!isExtensionEnabled || !isVideoSyncEnabled || isRespondingToPartner) return;
     safeSendMessage({
       type: "VIDEO_EVENT",
       action: "play",
@@ -136,7 +180,7 @@ function setupVideoListeners(video) {
   });
 
   video.addEventListener("pause", () => {
-    if (isRespondingToPartner) return;
+    if (!isExtensionEnabled || !isVideoSyncEnabled || isRespondingToPartner) return;
     safeSendMessage({
       type: "VIDEO_EVENT",
       action: "pause",
@@ -145,7 +189,7 @@ function setupVideoListeners(video) {
   });
 
   video.addEventListener("seeked", () => {
-    if (isRespondingToPartner) return;
+    if (!isExtensionEnabled || !isVideoSyncEnabled || isRespondingToPartner) return;
     safeSendMessage({
       type: "VIDEO_EVENT",
       action: "seek",
@@ -155,6 +199,7 @@ function setupVideoListeners(video) {
 }
 
 function scanForVideos() {
+  if (!isExtensionEnabled || !isVideoSyncEnabled) return;
   const videos = document.querySelectorAll("video");
   videos.forEach((video) => {
     if (!seenVideos.has(video)) {
@@ -171,6 +216,8 @@ scanForVideos();
 
 // Listen for sync events from the service worker
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!isExtensionEnabled) return;
+
   if (message.type === "PARTNER_COUNTDOWN") {
     showCountdownOverlay();
     sendResponse({ success: true });

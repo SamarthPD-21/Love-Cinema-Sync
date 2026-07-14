@@ -8,12 +8,13 @@ const config = {
   relationshipId: "",
   urlSyncEnabled: true,
   videoSyncEnabled: true,
+  extensionEnabled: true,
 };
 
 // Load saved config
 chrome.storage.local.get(Object.keys(config), (data) => {
   Object.assign(config, data);
-  if (config.token && config.relationshipId) {
+  if (config.token && config.relationshipId && config.extensionEnabled !== false) {
     connectSocket();
   }
 });
@@ -31,7 +32,7 @@ function isAppUrl(url) {
 // Listen for messages from popup or content scripts
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "KEEP_ALIVE") {
-    if (config.token && config.relationshipId && (!socket || !socket.connected)) {
+    if (config.extensionEnabled !== false && config.token && config.relationshipId && (!socket || !socket.connected)) {
       console.log("Extension Keepalive: Socket is disconnected, triggering automatic reconnection...");
       connectSocket();
     }
@@ -58,7 +59,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!socket || !socket.connected) {
         needsConnect = true;
       }
-      if (needsConnect) {
+      if (needsConnect && config.extensionEnabled !== false) {
         connectSocket();
       }
     }
@@ -69,7 +70,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "UPDATE_CONFIG") {
     Object.assign(config, message.config);
     chrome.storage.local.set(message.config, () => {
-      if (message.config.token || message.config.serverUrl) {
+      if (
+        message.config.token ||
+        message.config.serverUrl ||
+        message.config.extensionEnabled !== undefined
+      ) {
         connectSocket();
       }
     });
@@ -88,6 +93,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Forward video elements events to partner (only from app tab)
   if (
     message.type === "VIDEO_EVENT" &&
+    config.extensionEnabled !== false &&
     config.videoSyncEnabled &&
     socket &&
     socket.connected &&
@@ -105,6 +111,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Forward tab url changes to partner (only from app tab)
   if (
     message.type === "URL_EVENT" &&
+    config.extensionEnabled !== false &&
     config.urlSyncEnabled &&
     socket &&
     socket.connected &&
@@ -122,6 +129,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Track URL updates to notify partner when active tab URL changes on streaming sites (only for app tab)
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (
+    config.extensionEnabled !== false &&
     config.urlSyncEnabled &&
     changeInfo.status === "complete" &&
     tab.active &&
@@ -145,6 +153,11 @@ function connectSocket() {
   if (socket) {
     socket.disconnect();
     socket = null;
+  }
+
+  if (config.extensionEnabled === false) {
+    console.log("Love Sync extension is disabled. Skipping connection.");
+    return;
   }
 
   try {

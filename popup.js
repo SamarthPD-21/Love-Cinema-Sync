@@ -1,6 +1,7 @@
 // popup.js
 
 document.addEventListener("DOMContentLoaded", () => {
+  const extensionEnabledToggle = document.getElementById("extensionEnabledToggle");
   const urlSyncToggle = document.getElementById("urlSyncToggle");
   const videoSyncToggle = document.getElementById("videoSyncToggle");
   const toggleConfigBtn = document.getElementById("toggleConfigBtn");
@@ -27,7 +28,10 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       // Update badge status
-      if (response.connected) {
+      if (response.config.extensionEnabled === false) {
+        statusDot.className = "dot";
+        statusText.textContent = "Disabled";
+      } else if (response.connected) {
         statusDot.className = "dot connected";
         statusText.textContent = "Synced";
       } else {
@@ -36,6 +40,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       // Sync checkboxes
+      extensionEnabledToggle.checked = response.config.extensionEnabled !== false;
       urlSyncToggle.checked = response.config.urlSyncEnabled;
       videoSyncToggle.checked = response.config.videoSyncEnabled;
 
@@ -51,6 +56,15 @@ document.addEventListener("DOMContentLoaded", () => {
   const statusPoller = setInterval(updateStatus, 2000);
 
   // 2. Slider Toggle Handlers
+  extensionEnabledToggle.addEventListener("change", () => {
+    chrome.runtime.sendMessage({
+      type: "UPDATE_CONFIG",
+      config: { extensionEnabled: extensionEnabledToggle.checked },
+    }, () => {
+      updateStatus();
+    });
+  });
+
   urlSyncToggle.addEventListener("change", () => {
     chrome.runtime.sendMessage({
       type: "UPDATE_CONFIG",
