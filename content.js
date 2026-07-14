@@ -156,7 +156,7 @@ function updateIframeStyles() {
         margin: 0 !important;
         padding: 0 !important;
       }
-      header, footer, .sidebar, #header, #footer, .comment-section, .related-movies, .breadcrumbs, .alert-ad, .ad-box, .banner-ad, #sidebar {
+      header, footer, .sidebar, #header, #footer, .comment-section, .related-movies, .breadcrumbs, .alert-ad, .ad-box, .banner-ad, #sidebar, aside, nav, .menu, .navbar, .navigation, .left-menu, .side-nav, .left-sidebar, .nav-sidebar, [class*="sidebar"], [id*="sidebar"] {
         display: none !important;
         visibility: hidden !important;
         opacity: 0 !important;
