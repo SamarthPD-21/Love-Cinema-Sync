@@ -4,6 +4,7 @@ console.log("Love Cinema Sync extension content script loaded");
 let isExtensionEnabled = true;
 let isUrlSyncEnabled = true;
 let isVideoSyncEnabled = true;
+let lastObservedServer = "";
 
 // Helper to safely send messages to the extension background script without throwing uncaught context invalidation errors
 function safeSendMessage(message, callback) {
@@ -65,6 +66,13 @@ function syncExtensionConfig() {
           document.body.setAttribute("data-love-sync-extension-active", "true");
         } else {
           document.body.removeAttribute("data-love-sync-extension-active");
+        }
+
+        // Monitor server select requests
+        const currentServer = document.body.getAttribute("data-love-sync-server");
+        if (currentServer && currentServer !== lastObservedServer) {
+          lastObservedServer = currentServer;
+          safeSendMessage({ type: "SWITCH_SERVER", server: currentServer });
         }
       }
 
@@ -163,7 +171,7 @@ function updateIframeStyles() {
 // Initial config check
 syncExtensionConfig();
 // Regular status sync checks in case toggled via popup
-setInterval(syncExtensionConfig, 3000);
+setInterval(syncExtensionConfig, 2500);
 
 // 2. Video Sync Logic
 let isRespondingToPartner = false;
@@ -220,6 +228,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "PARTNER_COUNTDOWN") {
     showCountdownOverlay();
+    sendResponse({ success: true });
+    return true;
+  }
+
+  if (message.type === "DO_SWITCH_SERVER") {
+    selectServerOnPage(message.server);
     sendResponse({ success: true });
     return true;
   }
@@ -317,4 +331,40 @@ function showCountdownOverlay() {
       overlay.remove();
     }
   }, 1000);
+}
+
+function selectServerOnPage(serverName) {
+  if (!serverName) return;
+  console.log("Love Sync: Attempting to select server:", serverName);
+  
+  // 1. Target standard anchors and buttons
+  const elements = document.querySelectorAll("a, button, [data-server], .server, .server-item");
+  const target = serverName.toLowerCase().replace(/[^a-z0-9]/g, "");
+  
+  let found = false;
+  for (const el of elements) {
+    const text = el.textContent.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (text.includes(target)) {
+      console.log("Love Sync: Found server element, clicking:", el);
+      el.click();
+      found = true;
+      break;
+    }
+  }
+
+  if (!found) {
+    // Fallback: search leaf nodes of divs/spans
+    const leafNodes = document.querySelectorAll("div, span, li");
+    for (const el of leafNodes) {
+      if (el.children.length === 0) {
+        const text = el.textContent.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (text === target || text.includes(target)) {
+          console.log("Love Sync: Found leaf server node, clicking:", el);
+          el.click();
+          found = true;
+          break;
+        }
+      }
+    }
+  }
 }

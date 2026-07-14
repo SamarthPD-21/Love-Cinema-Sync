@@ -90,6 +90,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "SWITCH_SERVER") {
+    chrome.tabs.query({}, (tabs) => {
+      tabs.forEach((tab) => {
+        const url = tab.url || "";
+        if (url.includes("/lounge") || url.includes("1hd.art")) {
+          chrome.webNavigation.getAllFrames({ tabId: tab.id }, (frames) => {
+            if (frames) {
+              frames.forEach((frame) => {
+                chrome.tabs.sendMessage(tab.id, {
+                  type: "DO_SWITCH_SERVER",
+                  server: message.server,
+                }, { frameId: frame.frameId }).catch(() => {});
+              });
+            }
+          });
+        }
+      });
+    });
+    sendResponse({ success: true });
+    return true;
+  }
+
   // Forward video elements events to partner (only from app tab)
   if (
     message.type === "VIDEO_EVENT" &&
@@ -258,6 +280,26 @@ function connectSocket() {
               frames.forEach((frame) => {
                 chrome.tabs.sendMessage(tab.id, {
                   type: "PARTNER_COUNTDOWN",
+                }, { frameId: frame.frameId }).catch(() => {});
+              });
+            }
+          });
+        }
+      });
+    });
+
+    socket.on("cinema_server_changed", async (data) => {
+      if (config.extensionEnabled === false) return;
+      const tabs = await chrome.tabs.query({});
+      tabs.forEach((tab) => {
+        const url = tab.url || "";
+        if (url.includes("/lounge") || url.includes("1hd.art")) {
+          chrome.webNavigation.getAllFrames({ tabId: tab.id }, (frames) => {
+            if (frames) {
+              frames.forEach((frame) => {
+                chrome.tabs.sendMessage(tab.id, {
+                  type: "DO_SWITCH_SERVER",
+                  server: data.server
                 }, { frameId: frame.frameId }).catch(() => {});
               });
             }
