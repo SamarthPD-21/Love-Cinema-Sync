@@ -368,3 +368,86 @@ function selectServerOnPage(serverName) {
     }
   }
 }
+
+// 3. Trailer Auto-Block & Notice Overlay (e.g. for Cineby or VidSrc when movie is unavailable)
+function checkForTrailers() {
+  if (!isExtensionEnabled) return;
+
+  const bodyText = document.body.innerText || "";
+  const hasTrailerIndicator = 
+    bodyText.includes("Background Trailer") || 
+    bodyText.includes("Trailer Playing") || 
+    bodyText.includes("Playing Trailer");
+
+  if (hasTrailerIndicator) {
+    // 1. Pause and hide any active HTML5 video tags
+    const videos = document.querySelectorAll("video");
+    videos.forEach((video) => {
+      try {
+        video.pause();
+      } catch (e) {}
+      video.style.display = "none";
+      video.style.opacity = "0";
+      video.style.pointerEvents = "none";
+    });
+
+    // 2. Hide common iframe container elements or players if it is a trailer page
+    const playerHolders = document.querySelectorAll("#player, .player-container, #player-holder, .watching-player, #iframe-embed");
+    playerHolders.forEach((holder) => {
+      holder.style.display = "none";
+    });
+
+    // 3. Render a beautiful full-screen overlay notifying the user to change sources
+    let overlay = document.getElementById("love-sync-trailer-blocked");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "love-sync-trailer-blocked";
+      overlay.style.cssText = `
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        background: #05050f !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        justify-content: center !important;
+        text-align: center !important;
+        color: #F0EAF4 !important;
+        font-family: system-ui, -apple-system, sans-serif !important;
+        z-index: 99999999 !important;
+        padding: 20px !important;
+        box-sizing: border-box !important;
+      `;
+      
+      overlay.innerHTML = `
+        <div style="max-width: 400px; padding: 30px; border-radius: 24px; background: rgba(255,255,255,0.01); border: 1px solid rgba(232,88,122,0.15); box-shadow: 0 12px 40px 0 rgba(232,88,122,0.12); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);">
+          <div style="font-size: 48px; margin-bottom: 24px; display: inline-block; animation: pulse-scale 2s infinite ease-in-out;">🎬</div>
+          <h3 style="margin: 0 0 12px 0; font-size: 20px; font-weight: 800; color: #FFF; font-family: serif; letter-spacing: 0.5px;">Trailer Blocked</h3>
+          <p style="margin: 0 0 24px 0; font-size: 13px; color: #94a3b8; line-height: 1.6; font-weight: 500;">
+            This server is currently only hosting the trailer. Please select a different source (like <strong>1HD</strong> or <strong>VidSrc</strong>) from the controls bar to play the full movie.
+          </p>
+          <div style="font-size: 10px; font-weight: 700; color: #E8587A; text-transform: uppercase; letter-spacing: 1px; border: 1px dashed rgba(232,88,122,0.3); padding: 8px 16px; border-radius: 10px; display: inline-block; background: rgba(232,88,122,0.05);">
+            Select Another Source
+          </div>
+        </div>
+        <style>
+          @keyframes pulse-scale {
+            0% { transform: scale(1); opacity: 0.8; }
+            50% { transform: scale(1.08); opacity: 1; }
+            100% { transform: scale(1); opacity: 0.8; }
+          }
+        </style>
+      `;
+      document.documentElement.appendChild(overlay);
+    }
+  } else {
+    // If text goes away (user loads movie or switches page), remove it
+    const overlay = document.getElementById("love-sync-trailer-blocked");
+    if (overlay) overlay.remove();
+  }
+}
+
+// Check for trailers periodically
+setInterval(checkForTrailers, 1500);
