@@ -5,6 +5,8 @@ let isExtensionEnabled = true;
 let isUrlSyncEnabled = true;
 let isVideoSyncEnabled = true;
 let lastObservedServer = "";
+let isCinemaHallPage = false;
+let isIntervalsStarted = false;
 
 // Helper to safely send messages to the extension background script without throwing uncaught context invalidation errors
 function safeSendMessage(message, callback) {
@@ -56,47 +58,69 @@ const syncCredentials = () => {
 function syncExtensionConfig() {
   safeSendMessage({ type: "GET_CONNECTION_STATUS" }, (response) => {
     if (response && response.config) {
-      isExtensionEnabled = response.config.extensionEnabled !== false;
-      isUrlSyncEnabled = response.config.urlSyncEnabled !== false;
-      isVideoSyncEnabled = response.config.videoSyncEnabled !== false;
+      isCinemaHallPage = response.isCinemaHall === true;
 
       // Update page active attribute
       if (isAppDomain) {
-        if (isExtensionEnabled) {
+        if (isCinemaHallPage && response.config.extensionEnabled !== false) {
           document.body.setAttribute("data-love-sync-extension-active", "true");
         } else {
           document.body.removeAttribute("data-love-sync-extension-active");
         }
 
         // Monitor server select requests
-        const currentServer = document.body.getAttribute("data-love-sync-server");
-        if (currentServer && currentServer !== lastObservedServer) {
-          lastObservedServer = currentServer;
-          safeSendMessage({ type: "SWITCH_SERVER", server: currentServer });
+        if (isCinemaHallPage) {
+          const currentServer = document.body.getAttribute("data-love-sync-server");
+          if (currentServer && currentServer !== lastObservedServer) {
+            lastObservedServer = currentServer;
+            safeSendMessage({ type: "SWITCH_SERVER", server: currentServer });
+          }
         }
       }
 
+      if (!isCinemaHallPage) {
+        // Clean up styles if injected
+        const existing = document.getElementById("love-sync-iframe-styles");
+        if (existing) {
+          existing.remove();
+          console.log("Love Sync: Removed iframe maximization styles.");
+        }
+        const trailerBlocked = document.getElementById("love-sync-trailer-blocked");
+        if (trailerBlocked) {
+          trailerBlocked.remove();
+        }
+        return;
+      }
+
+      isExtensionEnabled = response.config.extensionEnabled !== false;
+      isUrlSyncEnabled = response.config.urlSyncEnabled !== false;
+      isVideoSyncEnabled = response.config.videoSyncEnabled !== false;
+
       // Update iframe layout overrides dynamically
       updateIframeStyles();
+
+      // Start background intervals (scanning videos and blocking trailers)
+      startIntervals();
     }
   });
 }
 
-if (isAppDomain) {
-  // Sync credentials on load
-  syncCredentials();
-  
-  // Periodic keep-alive ping and credentials sync
-  const keepAliveInterval = setInterval(() => {
-    syncCredentials();
-    syncExtensionConfig();
-    
-    const success = safeSendMessage({ type: "KEEP_ALIVE" });
-    if (!success) {
-      clearInterval(keepAliveInterval);
-      console.log("Love Sync: Stopped keep-alive loops as the extension context was invalidated.");
-    }
-  }, 10000); // Check status every 10s for responsive updates
+function startIntervals() {
+  if (isIntervalsStarted) return;
+  isIntervalsStarted = true;
+
+  // Monitor page for new video elements dynamically
+  setInterval(scanForVideos, 1500);
+  scanForVideos();
+
+  // Check for trailers periodically
+  setInterval(checkForTrailers, 1500);
+  checkForTrailers();
+
+  // For iframe players (non-app domains), they need to keep polling config
+  if (!isAppDomain) {
+    setInterval(syncExtensionConfig, 2500);
+  }
 }
 
 // 1.5. Maximize video player to cover full iframe viewport (Dynamic CSS Injection)
@@ -114,7 +138,7 @@ const isPlayerDomain =
 function updateIframeStyles() {
   const existing = document.getElementById("love-sync-iframe-styles");
   
-  if (!isExtensionEnabled) {
+  if (!isCinemaHallPage || !isExtensionEnabled) {
     if (existing) {
       existing.remove();
       console.log("Love Sync: Disabled state detected. Removed iframe maximization styles.");
@@ -170,8 +194,26 @@ function updateIframeStyles() {
 
 // Initial config check
 syncExtensionConfig();
-// Regular status sync checks in case toggled via popup
-setInterval(syncExtensionConfig, 2500);
+
+if (isAppDomain) {
+  // Sync credentials on load
+  syncCredentials();
+  
+  // Periodic keep-alive ping and credentials sync
+  const keepAliveInterval = setInterval(() => {
+    syncCredentials();
+    syncExtensionConfig();
+    
+    const success = safeSendMessage({ type: "KEEP_ALIVE" });
+    if (!success) {
+      clearInterval(keepAliveInterval);
+      console.log("Love Sync: Stopped keep-alive loops as the extension context was invalidated.");
+    }
+  }, 10000); // Check status every 10s for responsive updates
+
+  // Regular status sync checks for the app domain
+  setInterval(syncExtensionConfig, 2500);
+}
 
 // 2. Video Sync Logic
 let isRespondingToPartner = false;
@@ -207,7 +249,7 @@ function setupVideoListeners(video) {
 }
 
 function scanForVideos() {
-  if (!isExtensionEnabled || !isVideoSyncEnabled) return;
+  if (!isCinemaHallPage || !isExtensionEnabled || !isVideoSyncEnabled) return;
   const videos = document.querySelectorAll("video");
   videos.forEach((video) => {
     if (!seenVideos.has(video)) {
@@ -217,10 +259,6 @@ function scanForVideos() {
     }
   });
 }
-
-// Monitor page for new video elements dynamically
-setInterval(scanForVideos, 1500);
-scanForVideos();
 
 // Listen for sync events from the service worker
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -371,7 +409,7 @@ function selectServerOnPage(serverName) {
 
 // 3. Trailer Auto-Block & Notice Overlay (e.g. for Cineby or VidSrc when movie is unavailable)
 function checkForTrailers() {
-  if (!isExtensionEnabled) return;
+  if (!isCinemaHallPage || !isExtensionEnabled) return;
 
   const bodyText = document.body.innerText || "";
   const hasTrailerIndicator = 
@@ -450,4 +488,3 @@ function checkForTrailers() {
 }
 
 // Check for trailers periodically
-setInterval(checkForTrailers, 1500);

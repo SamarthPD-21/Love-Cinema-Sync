@@ -17,7 +17,23 @@
     },
     "condition": {
       "urlFilter": "*",
-      "resourceTypes": ["sub_frame"]
+      "resourceTypes": ["sub_frame"],
+      "initiatorDomains": [
+        "localhost",
+        "127.0.0.1",
+        "vercel.app",
+        "onrender.com",
+        "1hd.art",
+        "rabbitstream.to",
+        "rabbitstream.net",
+        "megacloud.tv",
+        "dokicloud.one",
+        "upcloud.one",
+        "vidcloud.one",
+        "upcloud.co",
+        "vidcloud.co",
+        "dokicloud.co"
+      ]
     }
   },
   {
@@ -50,6 +66,22 @@
         "love-x3zc.onrender.com",
         "love-weld-seven.vercel.app",
         "localhost"
+      ],
+      "initiatorDomains": [
+        "localhost",
+        "127.0.0.1",
+        "vercel.app",
+        "onrender.com",
+        "1hd.art",
+        "rabbitstream.to",
+        "rabbitstream.net",
+        "megacloud.tv",
+        "dokicloud.one",
+        "upcloud.one",
+        "vidcloud.one",
+        "upcloud.co",
+        "vidcloud.co",
+        "dokicloud.co"
       ]
     }
   }

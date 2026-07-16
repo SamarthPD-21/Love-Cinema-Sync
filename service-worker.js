@@ -29,6 +29,23 @@ function isAppUrl(url) {
   );
 }
 
+function isCinemaHallUrl(urlStr) {
+  if (!urlStr) return false;
+  try {
+    const url = new URL(urlStr);
+    const isAppHost = 
+      url.hostname === "localhost" ||
+      url.hostname === "127.0.0.1" ||
+      url.hostname.endsWith(".vercel.app") ||
+      url.hostname.endsWith(".onrender.com");
+    if (!isAppHost) return false;
+    
+    return url.pathname.includes("/cinema") || url.pathname.includes("/lounge");
+  } catch (e) {
+    return false;
+  }
+}
+
 // Listen for messages from popup or content scripts
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "KEEP_ALIVE") {
@@ -83,9 +100,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "GET_CONNECTION_STATUS") {
+    const isCinemaHall = sender.tab ? isCinemaHallUrl(sender.tab.url) : false;
     sendResponse({
       connected: socket ? socket.connected : false,
       config,
+      isCinemaHall,
     });
     return true;
   }
@@ -120,7 +139,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     socket &&
     socket.connected &&
     sender.tab &&
-    isAppUrl(sender.tab.url)
+    isCinemaHallUrl(sender.tab.url)
   ) {
     socket.emit("extension_video_control", {
       action: message.action,
@@ -138,7 +157,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     socket &&
     socket.connected &&
     sender.tab &&
-    isAppUrl(sender.tab.url)
+    isCinemaHallUrl(sender.tab.url)
   ) {
     socket.emit("extension_url_change", {
       url: message.url,
@@ -157,7 +176,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     tab.active &&
     socket &&
     socket.connected &&
-    isAppUrl(tab.url)
+    isCinemaHallUrl(tab.url)
   ) {
     const urlStr = tab.url || "";
     if (
@@ -274,7 +293,7 @@ function connectSocket() {
       const tabs = await chrome.tabs.query({});
       tabs.forEach((tab) => {
         const url = tab.url || "";
-        if (url.includes("/lounge") || url.includes("/cinema")) {
+        if (isCinemaHallUrl(url)) {
           chrome.webNavigation.getAllFrames({ tabId: tab.id }, (frames) => {
             if (frames) {
               frames.forEach((frame) => {
@@ -293,7 +312,7 @@ function connectSocket() {
       const tabs = await chrome.tabs.query({});
       tabs.forEach((tab) => {
         const url = tab.url || "";
-        if (url.includes("/lounge") || url.includes("/cinema") || url.includes("1hd.art")) {
+        if (isCinemaHallUrl(url) || url.includes("1hd.art")) {
           chrome.webNavigation.getAllFrames({ tabId: tab.id }, (frames) => {
             if (frames) {
               frames.forEach((frame) => {
@@ -314,7 +333,7 @@ function connectSocket() {
       const tabs = await chrome.tabs.query({});
       tabs.forEach(async (tab) => {
         const url = tab.url || "";
-        if ((url.includes("/lounge") || url.includes("/cinema")) && tab.url !== data.url) {
+        if (isCinemaHallUrl(url) && tab.url !== data.url) {
           await chrome.tabs.update(tab.id, { url: data.url });
         }
       });
@@ -326,7 +345,7 @@ function connectSocket() {
       const tabs = await chrome.tabs.query({});
       tabs.forEach((tab) => {
         const url = tab.url || "";
-        if (url.includes("/lounge") || url.includes("/cinema")) {
+        if (isCinemaHallUrl(url)) {
           chrome.webNavigation.getAllFrames({ tabId: tab.id }, (frames) => {
             if (frames) {
               frames.forEach((frame) => {
