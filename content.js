@@ -181,7 +181,8 @@ function updateIframeStyles() {
         margin: 0 !important;
         padding: 0 !important;
       }
-      header, footer, .sidebar, #header, #footer, .comment-section, .related-movies, .breadcrumbs, .alert-ad, .ad-box, .banner-ad, #sidebar, aside, nav, .menu, .navbar, .navigation, .left-menu, .side-nav, .left-sidebar, .nav-sidebar, [class*="sidebar"], [id*="sidebar"] {
+      header, footer, .sidebar, #header, #footer, .comment-section, .related-movies, .breadcrumbs, .alert-ad, .ad-box, .banner-ad, #sidebar, aside, nav, .menu, .navbar, .navigation, .left-menu, .side-nav, .left-sidebar, .nav-sidebar, [class*="sidebar"], [id*="sidebar"],
+      [class*="backdrop"], [class*="movie-info"], [class*="details-container"], [class*="banner"], [class*="navbar"], [class*="header"], [class*="footer"], .player-wrapper, .player-section, .play-wrapper, .movie-banner, .movie-backdrop, .backdrop-image, .backdrop, .movie-details, .details-content, [class*="menu"], [class*="ad-"], [id*="ad-"] {
         display: none !important;
         visibility: hidden !important;
         opacity: 0 !important;
