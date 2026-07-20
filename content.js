@@ -255,25 +255,70 @@ function findQuality() {
 
 // --- SECTION 5: CinemaMode Engine ---
 function findPlayerSection(el) {
-  let current = el;
-  const initialRect = current.getBoundingClientRect();
-  const initialArea = initialRect.width * initialRect.height;
+  if (!el) return el;
   
-  while (current && current.parentElement && current.parentElement !== document.body && current.parentElement !== document.documentElement) {
-    const parentRect = current.parentElement.getBoundingClientRect();
-    const parentArea = parentRect.width * parentRect.height;
-    
-    if (parentArea > initialArea * 1.5 || 
-        current.parentElement.tagName === "BODY" || 
-        current.parentElement.tagName === "HTML" ||
-        current.parentElement.classList.contains("cinema-room") ||
-        current.parentElement.id === "root" ||
-        current.parentElement.id === "__next") {
-      break;
-    }
+  // 1. Prioritize precise web video player engine containers (ArtPlayer, Plyr, JWPlayer, Video.js, etc.)
+  const playerEngineContainer = el.closest(
+    ".artplayer-app, .art-video-player, .plyr, .jwplayer, .video-js, .vjs-tech, .html5-video-player"
+  );
+  if (playerEngineContainer) return playerEngineContainer;
+
+  // 2. Direct player box containers (excluding broad wrappers that include site footers/bars)
+  const playerBox = el.closest(
+    "#player, .player-container, .watching-player, #player-holder, #iframe-embed, #video-player, [id*='player-box']"
+  );
+  if (playerBox) return playerBox;
+
+  // 3. Fallback: If el is inside a generic player wrapper
+  const genericWrapper = el.closest(
+    "[class*='player-wrapper'], [class*='PlayerWrapper'], [class*='player_wrapper'], [class*='player-container'], [class*='playerContainer']"
+  );
+  if (genericWrapper) return genericWrapper;
+
+  // 4. Otherwise walk up until reaching a main layout boundary
+  let current = el;
+  if (current.tagName === "VIDEO" && current.parentElement) {
     current = current.parentElement;
   }
+
+  while (
+    current &&
+    current.parentElement &&
+    current.parentElement !== document.body &&
+    current.parentElement !== document.documentElement
+  ) {
+    const parent = current.parentElement;
+    if (
+      parent.tagName === "BODY" ||
+      parent.tagName === "HTML" ||
+      parent.classList.contains("cinema-room") ||
+      parent.id === "root" ||
+      parent.id === "__next"
+    ) {
+      break;
+    }
+    current = parent;
+  }
   return current;
+}
+
+function cleanNativeControlsFromSection(section, originalStylesMap) {
+  if (!section) return;
+  // Hide site-specific control bars, server bars, or episode bars that might be nested inside or around section
+  const siteBars = section.querySelectorAll(
+    "[class*='controls-bar'], [class*='control-bar'], [class*='server-list'], [class*='servers-list'], [class*='episodes-list'], [class*='player-footer'], [class*='player-bottom'], [class*='site-controls']"
+  );
+  siteBars.forEach(bar => {
+    // Only hide if it's not part of ArtPlayer / Plyr / JWPlayer / VideoJS built-in player controls
+    if (!bar.closest(".art-controls, .plyr__controls, .jw-controls, .vjs-control-bar")) {
+      if (!originalStylesMap.has(bar)) {
+        originalStylesMap.set(bar, bar.style.cssText);
+      }
+      bar.style.setProperty("display", "none", "important");
+      bar.style.setProperty("visibility", "hidden", "important");
+      bar.style.setProperty("opacity", "0", "important");
+    }
+  });
 }
 
 function hideSiblings(section, originalStylesMap) {
@@ -322,6 +367,7 @@ const cinemaMode = {
   active: false,
   originalStyles: new Map(),
   playerEl: null,
+  sectionEl: null,
 
   toggle() {
     if (this.active) {
@@ -342,16 +388,33 @@ const cinemaMode = {
     this.playerEl = playerEl;
     this.active = true;
 
-    // 1. Walk up to section boundary
+    // 1. Walk up to section/container boundary
     const section = findPlayerSection(playerEl);
+    this.sectionEl = section;
     
     // 2. Hide all siblings up the tree
     hideSiblings(section, this.originalStyles);
+
+    // 3. Clean native website control bars nested inside or near section
+    cleanNativeControlsFromSection(section, this.originalStyles);
     
-    // 3. Maximize the player element
-    maximizeElement(playerEl, this.originalStyles);
+    // 4. Maximize the section container to full screen
+    maximizeElement(section, this.originalStyles);
+
+    // 5. Ensure all video elements inside section stretch to 100% width/height with current aspect mode
+    const videos = section.querySelectorAll ? section.querySelectorAll("video") : (playerEl.tagName === "VIDEO" ? [playerEl] : []);
+    videos.forEach(v => {
+      if (!this.originalStyles.has(v)) {
+        this.originalStyles.set(v, v.style.cssText);
+      }
+      v.style.setProperty("width", "100%", "important");
+      v.style.setProperty("height", "100%", "important");
+      v.style.setProperty("max-height", "100vh", "important");
+      v.style.setProperty("max-width", "100vw", "important");
+      v.style.setProperty("object-fit", currentAspectMode || "cover", "important");
+    });
     
-    // 4. Save and lock body
+    // 6. Save and lock body
     if (!this.originalStyles.has(document.body)) {
       this.originalStyles.set(document.body, document.body.style.cssText);
     }
@@ -363,7 +426,7 @@ const cinemaMode = {
     }
     document.documentElement.style.setProperty("overflow", "hidden", "important");
 
-    // 5. Post controls to parent and set global active state
+    // 7. Post controls to parent and set global active state
     postControlsToParent();
     document.documentElement.setAttribute("data-love-sync-cinema", "active");
   },
@@ -380,6 +443,10 @@ const cinemaMode = {
     if (this.playerEl) {
       this.playerEl.removeAttribute("data-love-sync-player");
       this.playerEl = null;
+    }
+    if (this.sectionEl) {
+      this.sectionEl.removeAttribute("data-love-sync-player");
+      this.sectionEl = null;
     }
 
     document.documentElement.removeAttribute("data-love-sync-cinema");
@@ -449,11 +516,31 @@ window.addEventListener("message", (event) => {
     if (cinemaMode.active) {
       const currentVideo = findMainPlayer();
       if (currentVideo) {
-        maximizeElement(currentVideo, cinemaMode.originalStyles);
+        const section = findPlayerSection(currentVideo);
+        maximizeElement(section, cinemaMode.originalStyles);
       }
     }
     postControlsToParent();
   }, 1500);
+});
+
+let currentAspectMode = "cover";
+
+// Listen for aspect ratio change requests from parent window
+window.addEventListener("message", (event) => {
+  if (!event.data) return;
+  if (event.data.type === "LOVE_SYNC_SET_ASPECT_RATIO") {
+    currentAspectMode = event.data.mode || "cover";
+    console.log("Love Sync: Aspect mode changed to:", currentAspectMode);
+    
+    const target = cinemaMode.sectionEl || cinemaMode.playerEl || document;
+    const videos = target.querySelectorAll ? target.querySelectorAll("video") : document.querySelectorAll("video");
+    videos.forEach(v => {
+      v.style.setProperty("object-fit", currentAspectMode, "important");
+      v.style.setProperty("width", "100%", "important");
+      v.style.setProperty("height", "100%", "important");
+    });
+  }
 });
 
 // Listen for rescan requests from the parent window
@@ -469,6 +556,34 @@ function removeTogglePill() { /* no-op: UI moved to client */ }
 // --- SECTION 6: Video Sync ---
 let isRespondingToPartner = false;
 const seenVideos = new WeakSet();
+
+function getMainVideoElement() {
+  const p = findMainPlayer();
+  if (p && p.tagName === "VIDEO") return p;
+  if (p && p.querySelector) {
+    const v = p.querySelector("video");
+    if (v) return v;
+  }
+  return document.querySelector("video");
+}
+
+function switchLanguageOnPage(targetLang) {
+  if (!targetLang) return;
+  const subDubItems = findSubDub();
+  const target = targetLang.toUpperCase();
+  const item = subDubItems.find(i => {
+    const lbl = i.label.toUpperCase();
+    if (target === "SUB" && (lbl === "SUB" || lbl === "SUBBED" || lbl === "JAPANESE")) return true;
+    if (target === "DUB" && (lbl === "DUB" || lbl === "DUBBED" || lbl === "ENGLISH")) return true;
+    return lbl.includes(target);
+  });
+  if (item && item.el) {
+    console.log(`Love Sync: Switching language on page to "${target}" via`, item.el);
+    isRespondingToPartner = true;
+    item.el.click();
+    setTimeout(() => { isRespondingToPartner = false; }, 1500);
+  }
+}
 
 function setupVideoListeners(video) {
   video.addEventListener("play", () => {
