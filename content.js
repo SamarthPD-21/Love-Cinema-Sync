@@ -7,6 +7,10 @@ let isVideoSyncEnabled = true;
 let lastObservedServer = "";
 let isCinemaHallPage = false;
 let isIntervalsStarted = false;
+let lastReceivedSeekTime = null;
+let lastReceivedSeekTimestamp = 0;
+let lastReceivedPlayPauseAction = null;
+let lastReceivedPlayPauseTimestamp = 0;
 
 // Helper to safely send messages to the extension background script without throwing uncaught context invalidation errors
 function safeSendMessage(message, callback) {
@@ -25,6 +29,25 @@ function safeSendMessage(message, callback) {
     // Context is invalidated
   }
   return false;
+}
+
+function getMainVideoElement() {
+  const videos = Array.from(document.querySelectorAll("video"));
+  if (videos.length === 0) return null;
+  if (videos.length === 1) return videos[0];
+  
+  // Find the video element with the largest area (width * height) that is visible
+  let mainVideo = null;
+  let maxArea = 0;
+  for (const video of videos) {
+    const rect = video.getBoundingClientRect();
+    const area = rect.width * rect.height;
+    if (area > maxArea && rect.width > 50 && rect.height > 50) {
+      maxArea = area;
+      mainVideo = video;
+    }
+  }
+  return mainVideo || videos[0];
 }
 
 // 1. Auto-sync credentials from the client app page (local & production domains)
@@ -127,6 +150,7 @@ function startIntervals() {
 const isPlayerDomain = 
   window.location.host.includes("1hd.art") || 
   window.location.host.includes("cineby") || 
+  window.location.host.includes("miruro") || 
   window.location.host.includes("rabbitstream") || 
   window.location.host.includes("upcloud") || 
   window.location.host.includes("vidcloud") || 
@@ -143,6 +167,120 @@ function updateIframeStyles() {
     if (existing) {
       existing.remove();
       console.log("Love Sync: Disabled state detected. Removed iframe maximization styles.");
+    }
+    return;
+  }
+
+  if (window.location.host.includes("cineby")) {
+    const existingCineby = document.getElementById("love-sync-iframe-styles");
+    if (!existingCineby) {
+      const style = document.createElement("style");
+      style.id = "love-sync-iframe-styles";
+      style.textContent = `
+        html, body {
+          overflow: hidden !important;
+          width: 100% !important;
+          height: 100% !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          background: black !important;
+        }
+        /* Maximize only active player iframes on Cineby (ignoring trailer streams) */
+        iframe[src*="vidking"]:not([src*="youtube"]),
+        iframe[src*="vidsrc"]:not([src*="youtube"]),
+        iframe[src*="embed"]:not([src*="youtube"]):not([src*="vimeo"]),
+        iframe[src*="player"]:not([src*="youtube"]):not([src*="vimeo"]),
+        .watch-play iframe,
+        #player iframe,
+        .player-container iframe {
+          position: fixed !important;
+          top: 0 !important;
+          left: 0 !important;
+          width: 100vw !important;
+          height: 100vh !important;
+          z-index: 9999999 !important;
+          background: black !important;
+          border: none !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+        /* Hide page details, sidebar columns, and trailers when movie iframe is streaming */
+        body:has(iframe[src*="vidking"]),
+        body:has(iframe[src*="vidsrc"]),
+        body:has(iframe[src*="embed"]:not([src*="youtube"]):not([src*="vimeo"])) {
+          background: black !important;
+        }
+        body:has(iframe[src*="vidking"]) .movie-info,
+        body:has(iframe[src*="vidsrc"]) .movie-info,
+        body:has(iframe[src*="embed"]:not([src*="youtube"]):not([src*="vimeo"])) .movie-info,
+        body:has(iframe[src*="vidking"]) header,
+        body:has(iframe[src*="vidsrc"]) header,
+        body:has(iframe[src*="embed"]:not([src*="youtube"]):not([src*="vimeo"])) header,
+        body:has(iframe[src*="vidking"]) footer,
+        body:has(iframe[src*="vidsrc"]) footer,
+        body:has(iframe[src*="embed"]:not([src*="youtube"]):not([src*="vimeo"])) footer,
+        body:has(iframe[src*="vidking"]) .sidebar,
+        body:has(iframe[src*="vidsrc"]) .sidebar,
+        body:has(iframe[src*="embed"]:not([src*="youtube"]):not([src*="vimeo"])) .sidebar {
+          display: none !important;
+        }
+      `;
+      document.documentElement.appendChild(style);
+      console.log("Love Sync: Injected Cineby-specific movie player maximizer styles.");
+    }
+    return;
+  }
+
+  if (window.location.host.includes("miruro")) {
+    const isWatchPage = window.location.pathname.includes("/watch");
+    if (!isWatchPage) {
+      const existingStyles = document.getElementById("love-sync-iframe-styles");
+      if (existingStyles) {
+        existingStyles.remove();
+        console.log("Love Sync: Non-watch Miruro page detected. Removed styles for episode selection.");
+      }
+      return;
+    }
+    const existingMiruro = document.getElementById("love-sync-iframe-styles");
+    if (!existingMiruro) {
+      const style = document.createElement("style");
+      style.id = "love-sync-iframe-styles";
+      style.textContent = `
+        html, body {
+          overflow: hidden !important;
+          width: 100% !important;
+          height: 100% !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          background: black !important;
+        }
+        /* Maximize only active player iframes or video elements on Miruro watch page */
+        video,
+        .artplayer-app,
+        .plyr,
+        .player-container,
+        #player,
+        iframe {
+          position: fixed !important;
+          top: 0 !important;
+          left: 0 !important;
+          width: 100vw !important;
+          height: 100vh !important;
+          z-index: 9999999 !important;
+          background: black !important;
+          border: none !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+        /* Hide all page layouts, episode lists, header controls, comments for pure cinematic focus */
+        header, footer, nav, .navbar, .header, .footer, .sidebar, .episode-list-container, .related-anime, [class*="Header"], [class*="Footer"], [class*="Sidebar"], [class*="Navbar"] {
+          display: none !important;
+          visibility: hidden !important;
+          opacity: 0 !important;
+        }
+      `;
+      document.documentElement.appendChild(style);
+      console.log("Love Sync: Injected Miruro movie player maximizer styles.");
     }
     return;
   }
@@ -181,8 +319,7 @@ function updateIframeStyles() {
         margin: 0 !important;
         padding: 0 !important;
       }
-      header, footer, .sidebar, #header, #footer, .comment-section, .related-movies, .breadcrumbs, .alert-ad, .ad-box, .banner-ad, #sidebar, aside, nav, .menu, .navbar, .navigation, .left-menu, .side-nav, .left-sidebar, .nav-sidebar, [class*="sidebar"], [id*="sidebar"],
-      [class*="backdrop"], [class*="movie-info"], [class*="details-container"], [class*="banner"], [class*="navbar"], [class*="header"], [class*="footer"], .player-wrapper, .player-section, .play-wrapper, .movie-banner, .movie-backdrop, .backdrop-image, .backdrop, .movie-details, .details-content, [class*="menu"], [class*="ad-"], [id*="ad-"] {
+      header, footer, .sidebar, #header, #footer, .comment-section, .related-movies, .breadcrumbs, .alert-ad, .ad-box, .banner-ad, #sidebar, aside, nav, .menu, .navbar, .navigation, .left-menu, .side-nav, .left-sidebar, .nav-sidebar, [class*="sidebar"], [id*="sidebar"] {
         display: none !important;
         visibility: hidden !important;
         opacity: 0 !important;
@@ -224,6 +361,16 @@ const seenVideos = new WeakSet();
 function setupVideoListeners(video) {
   video.addEventListener("play", () => {
     if (!isExtensionEnabled || !isVideoSyncEnabled || isRespondingToPartner) return;
+    if (video !== getMainVideoElement()) return;
+
+    if (
+      lastReceivedPlayPauseAction === "play" &&
+      Date.now() - lastReceivedPlayPauseTimestamp < 3000
+    ) {
+      console.log("Love Sync: Ignored bounce-back play event");
+      return;
+    }
+
     safeSendMessage({
       type: "VIDEO_EVENT",
       action: "play",
@@ -233,6 +380,16 @@ function setupVideoListeners(video) {
 
   video.addEventListener("pause", () => {
     if (!isExtensionEnabled || !isVideoSyncEnabled || isRespondingToPartner) return;
+    if (video !== getMainVideoElement()) return;
+
+    if (
+      lastReceivedPlayPauseAction === "pause" &&
+      Date.now() - lastReceivedPlayPauseTimestamp < 3000
+    ) {
+      console.log("Love Sync: Ignored bounce-back pause event");
+      return;
+    }
+
     safeSendMessage({
       type: "VIDEO_EVENT",
       action: "pause",
@@ -242,6 +399,15 @@ function setupVideoListeners(video) {
 
   video.addEventListener("seeked", () => {
     if (!isExtensionEnabled || !isVideoSyncEnabled || isRespondingToPartner) return;
+    if (video !== getMainVideoElement()) return;
+
+    const timeDiff = Math.abs(video.currentTime - lastReceivedSeekTime);
+    const timeSinceReceived = Date.now() - lastReceivedSeekTimestamp;
+    if (lastReceivedSeekTime !== null && timeDiff < 2.0 && timeSinceReceived < 3500) {
+      console.log("Love Sync: Ignored bounce-back seek event. diff:", timeDiff, "ms since:", timeSinceReceived);
+      return;
+    }
+
     safeSendMessage({
       type: "VIDEO_EVENT",
       action: "seek",
@@ -279,31 +445,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "PARTNER_VIDEO_EVENT") {
-    const videos = document.querySelectorAll("video");
-    if (videos.length === 0) return;
+    const mainVideo = getMainVideoElement();
+    if (!mainVideo) return;
 
-    videos.forEach((video) => {
-      isRespondingToPartner = true;
+    isRespondingToPartner = true;
 
-      if (message.action === "play") {
-        if (Math.abs(video.currentTime - message.time) > 1.5) {
-          video.currentTime = message.time;
-        }
-        video.play().catch(() => {});
-      } else if (message.action === "pause") {
-        video.pause();
-        if (Math.abs(video.currentTime - message.time) > 1.5) {
-          video.currentTime = message.time;
-        }
-      } else if (message.action === "seek") {
-        video.currentTime = message.time;
+    if (message.action === "seek" || Math.abs(mainVideo.currentTime - message.time) > 1.5) {
+      lastReceivedSeekTime = message.time;
+      lastReceivedSeekTimestamp = Date.now();
+    }
+
+    if (message.action === "play" || message.action === "pause") {
+      lastReceivedPlayPauseAction = message.action;
+      lastReceivedPlayPauseTimestamp = Date.now();
+    }
+
+    if (message.action === "play") {
+      if (Math.abs(mainVideo.currentTime - message.time) > 1.5) {
+        mainVideo.currentTime = message.time;
       }
+      mainVideo.play().catch(() => {});
+    } else if (message.action === "pause") {
+      mainVideo.pause();
+      if (Math.abs(mainVideo.currentTime - message.time) > 1.5) {
+        mainVideo.currentTime = message.time;
+      }
+    } else if (message.action === "seek") {
+      mainVideo.currentTime = message.time;
+    }
 
-      // Settle time buffer block flag
-      setTimeout(() => {
-        isRespondingToPartner = false;
-      }, 600);
-    });
+    // Settle time buffer block flag
+    setTimeout(() => {
+      isRespondingToPartner = false;
+    }, 800);
 
     sendResponse({ success: true });
     return true;
@@ -358,14 +532,14 @@ function showCountdownOverlay() {
       numEl.textContent = "PLAY! 🍿";
       textEl.textContent = "Enjoy the movie!";
       
-      const videos = document.querySelectorAll("video");
-      videos.forEach((video) => {
+      const mainVideo = getMainVideoElement();
+      if (mainVideo) {
         isRespondingToPartner = true;
-        video.play().catch(() => {});
+        mainVideo.play().catch(() => {});
         setTimeout(() => {
           isRespondingToPartner = false;
         }, 500);
-      });
+      }
     } else {
       clearInterval(interval);
       overlay.remove();
@@ -412,6 +586,10 @@ function selectServerOnPage(serverName) {
 // 3. Trailer Auto-Block & Notice Overlay (e.g. for Cineby or VidSrc when movie is unavailable)
 function checkForTrailers() {
   if (!isCinemaHallPage || !isExtensionEnabled) return;
+
+  if (window.location.host.includes("cineby") || window.location.host.includes("miruro")) {
+    return;
+  }
 
   const bodyText = document.body.innerText || "";
   const hasTrailerIndicator = 

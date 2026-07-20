@@ -33,11 +33,18 @@ function isCinemaHallUrl(urlStr) {
   if (!urlStr) return false;
   try {
     const url = new URL(urlStr);
+    const host = url.hostname;
+
+    // Support Miruro domains
+    if (host.includes("miruro")) {
+      return true;
+    }
+
     const isAppHost = 
-      url.hostname === "localhost" ||
-      url.hostname === "127.0.0.1" ||
-      url.hostname.endsWith(".vercel.app") ||
-      url.hostname.endsWith(".onrender.com");
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host.endsWith(".vercel.app") ||
+      host.endsWith(".onrender.com");
     if (!isAppHost) return false;
     
     return url.pathname.includes("/cinema") || url.pathname.includes("/lounge");
@@ -144,6 +151,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     socket.emit("extension_video_control", {
       action: message.action,
       time: message.time,
+      language: message.language,
     });
     sendResponse({ success: true });
     return true;
@@ -353,6 +361,7 @@ function connectSocket() {
                   type: "PARTNER_VIDEO_EVENT",
                   action: data.action,
                   time: data.time,
+                  language: data.language,
                 }, { frameId: frame.frameId }).catch(() => {});
               });
             }
