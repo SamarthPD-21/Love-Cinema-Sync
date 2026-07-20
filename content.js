@@ -1,6 +1,7 @@
 // content.js
 console.log("Love Cinema Sync extension content script loaded");
 
+// --- SECTION 1: Constants & State ---
 let isExtensionEnabled = true;
 let isUrlSyncEnabled = true;
 let isVideoSyncEnabled = true;
@@ -12,13 +13,41 @@ let lastReceivedSeekTimestamp = 0;
 let lastReceivedPlayPauseAction = null;
 let lastReceivedPlayPauseTimestamp = 0;
 
-// Helper to safely send messages to the extension background script without throwing uncaught context invalidation errors
+// Host checks
+const isAppDomain =
+  window.location.host.includes("localhost") ||
+  window.location.host.includes("127.0.0.1") ||
+  window.location.host.includes("vercel.app") ||
+  window.location.host.includes("onrender.com");
+
+const isPlayerDomain = 
+  window.location.host.includes("1hd.art") || 
+  window.location.host.includes("cineby") || 
+  window.location.host.includes("miruro") || 
+  window.location.host.includes("rabbitstream") || 
+  window.location.host.includes("upcloud") || 
+  window.location.host.includes("vidcloud") || 
+  window.location.host.includes("megacloud") || 
+  window.location.host.includes("dokicloud") ||
+  window.location.host.includes("cloud") ||
+  window.location.host.includes("stream") ||
+  window.location.host.includes("play");
+
+// Non-player iframe signatures to exclude from player finder
+const NON_PLAYER_PATTERNS = [
+  "disqus", "giscus", "facebook", "twitter", "google",
+  "ads", "analytics", "tracking", "comment", "chat",
+  "recaptcha", "cdn-cgi", "doubleclick", "adsense",
+  "widget", "gravatar"
+];
+
+// --- SECTION 2: Utility Functions ---
 function safeSendMessage(message, callback) {
   try {
     if (typeof chrome !== "undefined" && chrome?.runtime?.id) {
       chrome.runtime.sendMessage(message, (res) => {
         if (chrome.runtime.lastError) {
-          // Extension might be reloading or disabled
+          // Context might be invalidated
         } else if (callback) {
           callback(res);
         }
@@ -36,7 +65,6 @@ function getMainVideoElement() {
   if (videos.length === 0) return null;
   if (videos.length === 1) return videos[0];
   
-  // Find the video element with the largest area (width * height) that is visible
   let mainVideo = null;
   let maxArea = 0;
   for (const video of videos) {
@@ -50,311 +78,395 @@ function getMainVideoElement() {
   return mainVideo || videos[0];
 }
 
-// 1. Auto-sync credentials from the client app page (local & production domains)
-const isAppDomain =
-  window.location.host.includes("localhost") ||
-  window.location.host.includes("127.0.0.1") ||
-  window.location.host.includes("vercel.app") ||
-  window.location.host.includes("onrender.com");
+// --- SECTION 3: PlayerFinder Engine ---
+function isNonPlayerIframe(src) {
+  const lowerSrc = src.toLowerCase();
+  return NON_PLAYER_PATTERNS.some(pattern => lowerSrc.includes(pattern));
+}
 
-const syncCredentials = () => {
-  const token = localStorage.getItem("home-token");
-  const userStr = localStorage.getItem("home-user");
-  const serverUrl = document.body.getAttribute("data-socket-url") || localStorage.getItem("home-socket-url");
-  if (token && userStr) {
-    try {
-      const user = JSON.parse(userStr);
-      if (user.relationshipId) {
-        safeSendMessage({
-          type: "AUTO_SYNC_CREDENTIALS",
-          token: token,
-          relationshipId: user.relationshipId,
-          serverUrl: serverUrl || undefined,
-        });
-      }
-    } catch (e) {
-      console.warn("Love Sync: Failed to parse user credentials", e);
+function scoreElement(el, type) {
+  let score = 0;
+  
+  if (type === "video") {
+    score += 50;
+  } else if (type === "iframe") {
+    const src = (el.src || "").toLowerCase();
+    if (src.includes("embed") || src.includes("player") || src.includes("stream") || src.includes("watch")) {
+      score += 40;
     }
+  } else if (type === "container") {
+    score += 30;
   }
-};
 
-function syncExtensionConfig() {
-  safeSendMessage({ type: "GET_CONNECTION_STATUS" }, (response) => {
-    if (response && response.config) {
-      isCinemaHallPage = response.isCinemaHall === true;
+  // Size scoring
+  const rect = el.getBoundingClientRect();
+  const area = rect.width * rect.height;
+  const viewportArea = window.innerWidth * window.innerHeight;
+  
+  if (area > viewportArea * 0.3) {
+    score += 30;
+  }
+  if (rect.width > 100 && rect.height > 100) {
+    score += 10;
+  } else {
+    score -= 50; // Penalty for tiny elements
+  }
 
-      // Update page active attribute
-      if (isAppDomain) {
-        if (isCinemaHallPage && response.config.extensionEnabled !== false) {
-          document.body.setAttribute("data-love-sync-extension-active", "true");
-        } else {
-          document.body.removeAttribute("data-love-sync-extension-active");
-        }
+  // Proximity to known player selectors
+  if (el.closest(".artplayer-app, .plyr, .jwplayer, .video-js, .player-container, #player")) {
+    score += 20;
+  }
 
-        // Monitor server select requests
-        if (isCinemaHallPage) {
-          const currentServer = document.body.getAttribute("data-love-sync-server");
-          if (currentServer && currentServer !== lastObservedServer) {
-            lastObservedServer = currentServer;
-            safeSendMessage({ type: "SWITCH_SERVER", server: currentServer });
-          }
-        }
-      }
+  return score;
+}
 
-      if (!isCinemaHallPage) {
-        // Clean up styles if injected
-        const existing = document.getElementById("love-sync-iframe-styles");
-        if (existing) {
-          existing.remove();
-          console.log("Love Sync: Removed iframe maximization styles.");
-        }
-        const trailerBlocked = document.getElementById("love-sync-trailer-blocked");
-        if (trailerBlocked) {
-          trailerBlocked.remove();
-        }
-        return;
-      }
+function findMainPlayer() {
+  const candidates = [];
 
-      isExtensionEnabled = response.config.extensionEnabled !== false;
-      isUrlSyncEnabled = response.config.urlSyncEnabled !== false;
-      isVideoSyncEnabled = response.config.videoSyncEnabled !== false;
+  // 1. Check direct video elements
+  document.querySelectorAll("video").forEach(el => {
+    candidates.push({ el, score: scoreElement(el, "video") });
+  });
 
-      // Update iframe layout overrides dynamically
-      updateIframeStyles();
-
-      // Start background intervals (scanning videos and blocking trailers)
-      startIntervals();
+  // 2. Check iframes
+  document.querySelectorAll("iframe").forEach(el => {
+    const src = el.src || "";
+    if (src && !isNonPlayerIframe(src)) {
+      candidates.push({ el, score: scoreElement(el, "iframe") });
     }
   });
+
+  // 3. Check player container divs
+  const containerSelectors = [
+    ".artplayer-app", ".plyr", ".jwplayer", ".video-js",
+    ".player-container", "#player", ".watching-player",
+    "#player-holder", ".vjs-tech"
+  ];
+  document.querySelectorAll(containerSelectors.join(",")).forEach(el => {
+    candidates.push({ el, score: scoreElement(el, "container") });
+  });
+
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0].score > 0 ? candidates[0].el : null;
 }
 
-function startIntervals() {
-  if (isIntervalsStarted) return;
-  isIntervalsStarted = true;
+// --- SECTION 4: ControlsFinder Engine ---
+function findServers() {
+  const results = [];
+  const serverPatterns = [
+    /server\s*\d*/i, /source/i, /vidcloud/i, /upcloud/i,
+    /megacloud/i, /1hd/i, /vidsrc/i, /vidking/i,
+    /filemoon/i, /streamtape/i, /doodstream/i, /mp4upload/i
+  ];
 
-  // Monitor page for new video elements dynamically
-  setInterval(scanForVideos, 1500);
-  scanForVideos();
-
-  // Check for trailers periodically
-  setInterval(checkForTrailers, 1500);
-  checkForTrailers();
-
-  // For iframe players (non-app domains), they need to keep polling config
-  if (!isAppDomain) {
-    setInterval(syncExtensionConfig, 2500);
+  const clickables = document.querySelectorAll("a, button, [role='button'], [data-server]");
+  for (const el of clickables) {
+    const text = el.textContent.trim();
+    if (text.length > 0 && text.length < 30) {
+      for (const pattern of serverPatterns) {
+        if (pattern.test(text)) {
+          if (results.some(r => r.el === el)) continue;
+          const isActive = el.classList.contains("active") ||
+                           el.getAttribute("aria-selected") === "true" ||
+                           el.classList.contains("selected");
+          results.push({ el, label: text, active: isActive });
+          break;
+        }
+      }
+    }
   }
+  return results;
 }
 
-// 1.5. Maximize video player to cover full iframe viewport (Dynamic CSS Injection)
-const isPlayerDomain = 
-  window.location.host.includes("1hd.art") || 
-  window.location.host.includes("cineby") || 
-  window.location.host.includes("miruro") || 
-  window.location.host.includes("rabbitstream") || 
-  window.location.host.includes("upcloud") || 
-  window.location.host.includes("vidcloud") || 
-  window.location.host.includes("megacloud") || 
-  window.location.host.includes("dokicloud") ||
-  window.location.host.includes("cloud") ||
-  window.location.host.includes("stream") ||
-  window.location.host.includes("play");
+function findSubDub() {
+  const results = [];
+  const allElements = document.querySelectorAll("button, a, span, div, li");
 
-function updateIframeStyles() {
-  const existing = document.getElementById("love-sync-iframe-styles");
+  for (const el of allElements) {
+    if (el.children.length > 0) continue; // leaf nodes only
+    const text = el.textContent.trim().toUpperCase();
+    if (text === "SUB" || text === "DUB" ||
+        text === "SUBBED" || text === "DUBBED" ||
+        text === "JAPANESE" || text === "ENGLISH") {
+      const clickTarget = el.closest("button") || el.closest("a") ||
+                          el.closest("[role='button']") || el;
+      if (results.some(r => r.el === clickTarget)) continue;
+      
+      const isActive = clickTarget.classList.contains("active") ||
+                       clickTarget.getAttribute("aria-selected") === "true" ||
+                       clickTarget.classList.contains("selected") ||
+                       el.classList.contains("active") ||
+                       el.classList.contains("selected");
+      results.push({ el: clickTarget, label: text, active: isActive });
+    }
+  }
+  return results;
+}
+
+function findEpisodes() {
+  const results = [];
+  const links = document.querySelectorAll("a, button, [role='button']");
   
-  if (!isCinemaHallPage || !isExtensionEnabled) {
-    if (existing) {
-      existing.remove();
-      console.log("Love Sync: Disabled state detected. Removed iframe maximization styles.");
-    }
-    return;
-  }
-
-  if (window.location.host.includes("cineby")) {
-    const existingCineby = document.getElementById("love-sync-iframe-styles");
-    if (!existingCineby) {
-      const style = document.createElement("style");
-      style.id = "love-sync-iframe-styles";
-      style.textContent = `
-        html, body {
-          overflow: hidden !important;
-          width: 100% !important;
-          height: 100% !important;
-          margin: 0 !important;
-          padding: 0 !important;
-          background: black !important;
-        }
-        /* Maximize only active player iframes on Cineby (ignoring trailer streams) */
-        iframe[src*="vidking"]:not([src*="youtube"]),
-        iframe[src*="vidsrc"]:not([src*="youtube"]),
-        iframe[src*="embed"]:not([src*="youtube"]):not([src*="vimeo"]),
-        iframe[src*="player"]:not([src*="youtube"]):not([src*="vimeo"]),
-        .watch-play iframe,
-        #player iframe,
-        .player-container iframe {
-          position: fixed !important;
-          top: 0 !important;
-          left: 0 !important;
-          width: 100vw !important;
-          height: 100vh !important;
-          z-index: 9999999 !important;
-          background: black !important;
-          border: none !important;
-          margin: 0 !important;
-          padding: 0 !important;
-        }
-        /* Hide page details, sidebar columns, and trailers when movie iframe is streaming */
-        body:has(iframe[src*="vidking"]),
-        body:has(iframe[src*="vidsrc"]),
-        body:has(iframe[src*="embed"]:not([src*="youtube"]):not([src*="vimeo"])) {
-          background: black !important;
-        }
-        body:has(iframe[src*="vidking"]) .movie-info,
-        body:has(iframe[src*="vidsrc"]) .movie-info,
-        body:has(iframe[src*="embed"]:not([src*="youtube"]):not([src*="vimeo"])) .movie-info,
-        body:has(iframe[src*="vidking"]) header,
-        body:has(iframe[src*="vidsrc"]) header,
-        body:has(iframe[src*="embed"]:not([src*="youtube"]):not([src*="vimeo"])) header,
-        body:has(iframe[src*="vidking"]) footer,
-        body:has(iframe[src*="vidsrc"]) footer,
-        body:has(iframe[src*="embed"]:not([src*="youtube"]):not([src*="vimeo"])) footer,
-        body:has(iframe[src*="vidking"]) .sidebar,
-        body:has(iframe[src*="vidsrc"]) .sidebar,
-        body:has(iframe[src*="embed"]:not([src*="youtube"]):not([src*="vimeo"])) .sidebar {
-          display: none !important;
-        }
-      `;
-      document.documentElement.appendChild(style);
-      console.log("Love Sync: Injected Cineby-specific movie player maximizer styles.");
-    }
-    return;
-  }
-
-  if (window.location.host.includes("miruro")) {
-    const isWatchPage = window.location.pathname.includes("/watch");
-    if (!isWatchPage) {
-      const existingStyles = document.getElementById("love-sync-iframe-styles");
-      if (existingStyles) {
-        existingStyles.remove();
-        console.log("Love Sync: Non-watch Miruro page detected. Removed styles for episode selection.");
+  for (const el of links) {
+    const text = el.textContent.trim();
+    if (/^(ep\.?\s*)?(\d{1,4})$/i.test(text)) {
+      const container = el.closest("[class*='episode'], [class*='Episode'], [id*='episode'], .episodes");
+      if (container) {
+        if (results.some(r => r.el === el)) continue;
+        const isActive = el.classList.contains("active") ||
+                         el.getAttribute("aria-current") === "true" ||
+                         el.classList.contains("selected");
+        results.push({ el, label: `Ep ${text.replace(/\D/g, "")}`, active: isActive });
       }
-      return;
     }
-    const existingMiruro = document.getElementById("love-sync-iframe-styles");
-    if (!existingMiruro) {
-      const style = document.createElement("style");
-      style.id = "love-sync-iframe-styles";
-      style.textContent = `
-        html, body {
-          overflow: hidden !important;
-          width: 100% !important;
-          height: 100% !important;
-          margin: 0 !important;
-          padding: 0 !important;
-          background: black !important;
-        }
-        /* Maximize only active player iframes or video elements on Miruro watch page */
-        video,
-        .artplayer-app,
-        .plyr,
-        .player-container,
-        #player,
-        iframe {
-          position: fixed !important;
-          top: 0 !important;
-          left: 0 !important;
-          width: 100vw !important;
-          height: 100vh !important;
-          z-index: 9999999 !important;
-          background: black !important;
-          border: none !important;
-          margin: 0 !important;
-          padding: 0 !important;
-        }
-        /* Hide all page layouts, episode lists, header controls, comments for pure cinematic focus */
-        header, footer, nav, .navbar, .header, .footer, .sidebar, .episode-list-container, .related-anime, [class*="Header"], [class*="Footer"], [class*="Sidebar"], [class*="Navbar"] {
-          display: none !important;
-          visibility: hidden !important;
-          opacity: 0 !important;
-        }
-      `;
-      document.documentElement.appendChild(style);
-      console.log("Love Sync: Injected Miruro movie player maximizer styles.");
-    }
-    return;
-  }
-
-  if ((window !== window.top || isPlayerDomain) && !existing) {
-    const style = document.createElement("style");
-    style.id = "love-sync-iframe-styles";
-    style.textContent = `
-      html, body {
-        overflow: hidden !important;
-        width: 100% !important;
-        height: 100% !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        background: black !important;
-      }
-      iframe#iframe-embed, 
-      .watch-play iframe,
-      iframe[src*="embed"], 
-      iframe[src*="player"],
-      #player,
-      .player-container,
-      video,
-      .jwplayer,
-      .vjs-tech,
-      #player-holder,
-      .watching-player {
-        position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
-        width: 100vw !important;
-        height: 100vh !important;
-        z-index: 9999999 !important;
-        background: black !important;
-        border: none !important;
-        margin: 0 !important;
-        padding: 0 !important;
-      }
-      header, footer, .sidebar, #header, #footer, .comment-section, .related-movies, .breadcrumbs, .alert-ad, .ad-box, .banner-ad, #sidebar, aside, nav, .menu, .navbar, .navigation, .left-menu, .side-nav, .left-sidebar, .nav-sidebar, [class*="sidebar"], [id*="sidebar"] {
-        display: none !important;
-        visibility: hidden !important;
-        opacity: 0 !important;
-        pointer-events: none !important;
-      }
-    `;
-    document.documentElement.appendChild(style);
-    console.log("Love Sync: Applied iframe player maximization styles to frame: " + window.location.host);
-  }
-}
-
-// Initial config check
-syncExtensionConfig();
-
-if (isAppDomain) {
-  // Sync credentials on load
-  syncCredentials();
-  
-  // Periodic keep-alive ping and credentials sync
-  const keepAliveInterval = setInterval(() => {
-    syncCredentials();
-    syncExtensionConfig();
     
-    const success = safeSendMessage({ type: "KEEP_ALIVE" });
-    if (!success) {
-      clearInterval(keepAliveInterval);
-      console.log("Love Sync: Stopped keep-alive loops as the extension context was invalidated.");
+    const lowerText = text.toLowerCase();
+    if (lowerText.includes("next") && (lowerText.includes("ep") || lowerText.includes("episode"))) {
+      results.push({ el, label: "Next ▸", active: false });
     }
-  }, 10000); // Check status every 10s for responsive updates
-
-  // Regular status sync checks for the app domain
-  setInterval(syncExtensionConfig, 2500);
+    if (lowerText.includes("prev") && (lowerText.includes("ep") || lowerText.includes("episode"))) {
+      results.push({ el, label: "◂ Prev", active: false });
+    }
+  }
+  return results;
 }
 
-// 2. Video Sync Logic
+function findQuality() {
+  const results = [];
+  const qualityPatterns = [/\d{3,4}p/i, /4k/i, /hd/i, /fhd/i, /uhd/i, /auto/i];
+
+  const clickables = document.querySelectorAll("a, button, [role='button'], li, span");
+  for (const el of clickables) {
+    const text = el.textContent.trim();
+    if (text.length > 0 && text.length < 15) {
+      for (const pattern of qualityPatterns) {
+        if (pattern.test(text)) {
+          if (results.some(r => r.el === el)) continue;
+          const isActive = el.classList.contains("active") || el.classList.contains("selected");
+          results.push({ el, label: text, active: isActive });
+          break;
+        }
+      }
+    }
+  }
+  return results;
+}
+
+// --- SECTION 5: CinemaMode Engine ---
+function findPlayerSection(el) {
+  let current = el;
+  const initialRect = current.getBoundingClientRect();
+  const initialArea = initialRect.width * initialRect.height;
+  
+  while (current && current.parentElement && current.parentElement !== document.body && current.parentElement !== document.documentElement) {
+    const parentRect = current.parentElement.getBoundingClientRect();
+    const parentArea = parentRect.width * parentRect.height;
+    
+    if (parentArea > initialArea * 1.5 || 
+        current.parentElement.tagName === "BODY" || 
+        current.parentElement.tagName === "HTML" ||
+        current.parentElement.classList.contains("cinema-room") ||
+        current.parentElement.id === "root" ||
+        current.parentElement.id === "__next") {
+      break;
+    }
+    current = current.parentElement;
+  }
+  return current;
+}
+
+function hideSiblings(section, originalStylesMap) {
+  let current = section;
+  while (current && current !== document.body) {
+    const parent = current.parentElement;
+    if (parent) {
+      Array.from(parent.children).forEach(sibling => {
+        if (sibling !== current && 
+            sibling.id !== "love-sync-countdown" &&
+            sibling.id !== "love-sync-trailer-blocked") {
+          if (!originalStylesMap.has(sibling)) {
+            originalStylesMap.set(sibling, sibling.style.cssText);
+          }
+          sibling.style.setProperty("display", "none", "important");
+          sibling.style.setProperty("visibility", "hidden", "important");
+          sibling.style.setProperty("opacity", "0", "important");
+          sibling.style.setProperty("pointer-events", "none", "important");
+        }
+      });
+    }
+    current = parent;
+  }
+}
+
+function maximizeElement(el, originalStylesMap) {
+  if (!originalStylesMap.has(el)) {
+    originalStylesMap.set(el, el.style.cssText);
+  }
+  
+  el.setAttribute("data-love-sync-player", "true");
+  el.style.setProperty("position", "fixed", "important");
+  el.style.setProperty("top", "0", "important");
+  el.style.setProperty("left", "0", "important");
+  el.style.setProperty("width", "100vw", "important");
+  el.style.setProperty("height", "100vh", "important");
+  el.style.setProperty("z-index", "2147483646", "important");
+  el.style.setProperty("background", "black", "important");
+  el.style.setProperty("border", "none", "important");
+  el.style.setProperty("margin", "0", "important");
+  el.style.setProperty("padding", "0", "important");
+  el.style.setProperty("box-shadow", "none", "important");
+}
+
+const cinemaMode = {
+  active: false,
+  originalStyles: new Map(),
+  playerEl: null,
+
+  toggle() {
+    if (this.active) {
+      this.deactivate();
+    } else {
+      const player = findMainPlayer();
+      if (player) {
+        this.activate(player);
+      } else {
+        console.warn("Love Sync: Main video player element not found on page.");
+      }
+    }
+  },
+
+  activate(playerEl) {
+    if (!playerEl) return;
+    console.log("Love Sync: Activating Cinema Mode for player:", playerEl);
+    this.playerEl = playerEl;
+    this.active = true;
+
+    // 1. Walk up to section boundary
+    const section = findPlayerSection(playerEl);
+    
+    // 2. Hide all siblings up the tree
+    hideSiblings(section, this.originalStyles);
+    
+    // 3. Maximize the player element
+    maximizeElement(playerEl, this.originalStyles);
+    
+    // 4. Save and lock body
+    if (!this.originalStyles.has(document.body)) {
+      this.originalStyles.set(document.body, document.body.style.cssText);
+    }
+    document.body.style.setProperty("overflow", "hidden", "important");
+    document.body.style.setProperty("background", "black", "important");
+
+    if (!this.originalStyles.has(document.documentElement)) {
+      this.originalStyles.set(document.documentElement, document.documentElement.style.cssText);
+    }
+    document.documentElement.style.setProperty("overflow", "hidden", "important");
+
+    // 5. Post controls to parent and set global active state
+    postControlsToParent();
+    document.documentElement.setAttribute("data-love-sync-cinema", "active");
+  },
+
+  deactivate() {
+    console.log("Love Sync: Deactivating Cinema Mode.");
+    
+    // Restore original CSS styles
+    this.originalStyles.forEach((original, el) => {
+      if (el) el.style.cssText = original;
+    });
+    this.originalStyles.clear();
+
+    if (this.playerEl) {
+      this.playerEl.removeAttribute("data-love-sync-player");
+      this.playerEl = null;
+    }
+
+    document.documentElement.removeAttribute("data-love-sync-cinema");
+    this.active = false;
+  },
+
+  // Post detected controls to parent window (client page) instead of building a DOM panel
+  showControlsPanel() {
+    postControlsToParent();
+  },
+};
+
+// --- Detected controls cache for click commands ---
+let lastDetectedControls = { servers: [], languages: [], episodes: [], quality: [] };
+
+function postControlsToParent() {
+  try {
+    const controls = {
+      servers: findServers().map((s, i) => ({ label: s.label, active: s.active, index: i })),
+      languages: findSubDub().map((s, i) => ({ label: s.label, active: s.active, index: i })),
+      episodes: findEpisodes().map((s, i) => ({ label: s.label, active: s.active, index: i })),
+      quality: findQuality().map((s, i) => ({ label: s.label, active: s.active, index: i })),
+    };
+    // Cache the raw elements for click commands
+    lastDetectedControls = {
+      servers: findServers(),
+      languages: findSubDub(),
+      episodes: findEpisodes(),
+      quality: findQuality(),
+    };
+    // Send to parent window (the cinema hall page)
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: "LOVE_SYNC_CONTROLS_DATA", controls }, "*");
+    }
+  } catch (e) {
+    // Cross-origin or other error — silently ignore
+  }
+}
+
+// Listen for click commands from the parent window (client)
+window.addEventListener("message", (event) => {
+  if (!event.data || event.data.type !== "LOVE_SYNC_CLICK_CONTROL") return;
+  const { category, index } = event.data;
+  const items = lastDetectedControls[category];
+  if (!items || !items[index]) return;
+
+  const item = items[index];
+  console.log(`Love Sync: Received click command for ${category}[${index}]: "${item.label}"`);
+
+  isRespondingToPartner = true;
+  item.el.click();
+
+  const upperLabel = item.label.toUpperCase();
+  if (upperLabel === "SUB" || upperLabel === "DUB") {
+    safeSendMessage({
+      type: "VIDEO_EVENT",
+      action: "switch_language",
+      language: upperLabel.toLowerCase(),
+      time: 0
+    });
+  }
+
+  setTimeout(() => { isRespondingToPartner = false; }, 1500);
+
+  // Re-scan and re-post after the click takes effect
+  setTimeout(() => {
+    if (cinemaMode.active) {
+      const currentVideo = findMainPlayer();
+      if (currentVideo) {
+        maximizeElement(currentVideo, cinemaMode.originalStyles);
+      }
+    }
+    postControlsToParent();
+  }, 1500);
+});
+
+// Listen for rescan requests from the parent window
+window.addEventListener("message", (event) => {
+  if (!event.data || event.data.type !== "LOVE_SYNC_RESCAN_CONTROLS") return;
+  postControlsToParent();
+});
+
+// Toggle pill and remove functions are no-ops — UI is now in the client
+function injectTogglePill() { /* no-op: UI moved to client */ }
+function removeTogglePill() { /* no-op: UI moved to client */ }
+
+// --- SECTION 6: Video Sync ---
 let isRespondingToPartner = false;
 const seenVideos = new WeakSet();
 
@@ -428,7 +540,7 @@ function scanForVideos() {
   });
 }
 
-// Listen for sync events from the service worker
+// --- SECTION 7: Message Handlers ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!isExtensionEnabled) return;
 
@@ -439,12 +551,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "DO_SWITCH_SERVER") {
-    selectServerOnPage(message.server);
+    // Attempt dynamic server click
+    const servers = findServers();
+    const target = (message.server || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const found = servers.find(s => s.label.toLowerCase().replace(/[^a-z0-9]/g, "").includes(target));
+    if (found) {
+      isRespondingToPartner = true;
+      found.el.click();
+      setTimeout(() => { isRespondingToPartner = false; }, 1500);
+    }
     sendResponse({ success: true });
     return true;
   }
 
   if (message.type === "PARTNER_VIDEO_EVENT") {
+    if (message.action === "switch_language") {
+      switchLanguageOnPage(message.language);
+      sendResponse({ success: true });
+      return true;
+    }
+
     const mainVideo = getMainVideoElement();
     if (!mainVideo) return;
 
@@ -474,7 +600,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       mainVideo.currentTime = message.time;
     }
 
-    // Settle time buffer block flag
     setTimeout(() => {
       isRespondingToPartner = false;
     }, 800);
@@ -484,6 +609,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
+// --- SECTION 8: UI Overlays ---
 function showCountdownOverlay() {
   const existing = document.getElementById("love-sync-countdown");
   if (existing) existing.remove();
@@ -499,7 +625,7 @@ function showCountdownOverlay() {
   overlay.style.flexDirection = "column";
   overlay.style.alignItems = "center";
   overlay.style.justifyContent = "center";
-  overlay.style.color = "#f59e0b"; // Amber
+  overlay.style.color = "#f59e0b";
   overlay.style.fontFamily = "sans-serif";
   overlay.style.pointerEvents = "none";
 
@@ -547,46 +673,8 @@ function showCountdownOverlay() {
   }, 1000);
 }
 
-function selectServerOnPage(serverName) {
-  if (!serverName) return;
-  console.log("Love Sync: Attempting to select server:", serverName);
-  
-  // 1. Target standard anchors and buttons
-  const elements = document.querySelectorAll("a, button, [data-server], .server, .server-item");
-  const target = serverName.toLowerCase().replace(/[^a-z0-9]/g, "");
-  
-  let found = false;
-  for (const el of elements) {
-    const text = el.textContent.toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (text.includes(target)) {
-      console.log("Love Sync: Found server element, clicking:", el);
-      el.click();
-      found = true;
-      break;
-    }
-  }
-
-  if (!found) {
-    // Fallback: search leaf nodes of divs/spans
-    const leafNodes = document.querySelectorAll("div, span, li");
-    for (const el of leafNodes) {
-      if (el.children.length === 0) {
-        const text = el.textContent.toLowerCase().replace(/[^a-z0-9]/g, "");
-        if (text === target || text.includes(target)) {
-          console.log("Love Sync: Found leaf server node, clicking:", el);
-          el.click();
-          found = true;
-          break;
-        }
-      }
-    }
-  }
-}
-
-// 3. Trailer Auto-Block & Notice Overlay (e.g. for Cineby or VidSrc when movie is unavailable)
 function checkForTrailers() {
   if (!isCinemaHallPage || !isExtensionEnabled) return;
-
   if (window.location.host.includes("cineby") || window.location.host.includes("miruro")) {
     return;
   }
@@ -598,7 +686,6 @@ function checkForTrailers() {
     bodyText.includes("Playing Trailer");
 
   if (hasTrailerIndicator) {
-    // 1. Pause and hide any active HTML5 video tags
     const videos = document.querySelectorAll("video");
     videos.forEach((video) => {
       try {
@@ -609,13 +696,11 @@ function checkForTrailers() {
       video.style.pointerEvents = "none";
     });
 
-    // 2. Hide common iframe container elements or players if it is a trailer page
     const playerHolders = document.querySelectorAll("#player, .player-container, #player-holder, .watching-player, #iframe-embed");
     playerHolders.forEach((holder) => {
       holder.style.display = "none";
     });
 
-    // 3. Render a beautiful full-screen overlay notifying the user to change sources
     let overlay = document.getElementById("love-sync-trailer-blocked");
     if (!overlay) {
       overlay = document.createElement("div");
@@ -661,10 +746,127 @@ function checkForTrailers() {
       document.documentElement.appendChild(overlay);
     }
   } else {
-    // If text goes away (user loads movie or switches page), remove it
     const overlay = document.getElementById("love-sync-trailer-blocked");
     if (overlay) overlay.remove();
   }
 }
 
-// Check for trailers periodically
+// --- SECTION 9: Credential & Sync ---
+const syncCredentials = () => {
+  const token = localStorage.getItem("home-token");
+  const userStr = localStorage.getItem("home-user");
+  const serverUrl = document.body.getAttribute("data-socket-url") || localStorage.getItem("home-socket-url");
+  if (token && userStr) {
+    try {
+      const user = JSON.parse(userStr);
+      if (user.relationshipId) {
+        safeSendMessage({
+          type: "AUTO_SYNC_CREDENTIALS",
+          token: token,
+          relationshipId: user.relationshipId,
+          serverUrl: serverUrl || undefined,
+        });
+      }
+    } catch (e) {
+      console.warn("Love Sync: Failed to parse user credentials", e);
+    }
+  }
+};
+
+function syncExtensionConfig() {
+  safeSendMessage({ type: "GET_CONNECTION_STATUS" }, (response) => {
+    if (response && response.config) {
+      isCinemaHallPage = response.isCinemaHall === true;
+      isExtensionEnabled = response.config.extensionEnabled !== false;
+      isUrlSyncEnabled = response.config.urlSyncEnabled !== false;
+      isVideoSyncEnabled = response.config.videoSyncEnabled !== false;
+
+      if (isAppDomain) {
+        if (isCinemaHallPage && isExtensionEnabled) {
+          document.body.setAttribute("data-love-sync-extension-active", "true");
+        } else {
+          document.body.removeAttribute("data-love-sync-extension-active");
+        }
+      }
+
+      if (!isCinemaHallPage || !isExtensionEnabled) {
+        if (cinemaMode.active) {
+          cinemaMode.deactivate();
+        }
+        removeTogglePill();
+        return;
+      }
+
+      // Auto-maximize if in player page / watch route / nested iframe inside room
+      const isWatch = window.location.pathname.includes("/watch") || isPlayerDomain || window !== window.top;
+      if (isWatch) {
+        injectTogglePill();
+        
+        if (!cinemaMode.active) {
+          setTimeout(() => {
+            const player = findMainPlayer();
+            if (player) {
+              cinemaMode.activate(player);
+            }
+          }, 1200);
+        }
+      } else {
+        removeTogglePill();
+      }
+
+      startIntervals();
+    }
+  });
+}
+
+function startIntervals() {
+  if (isIntervalsStarted) return;
+  isIntervalsStarted = true;
+
+  setInterval(scanForVideos, 1500);
+  scanForVideos();
+
+  setInterval(checkForTrailers, 1500);
+  checkForTrailers();
+
+  // Periodically post detected controls to the parent window
+  setInterval(postControlsToParent, 3000);
+
+  if (!isAppDomain) {
+    setInterval(syncExtensionConfig, 2500);
+  }
+}
+
+// Keyboard shortcuts (Escape key toggle)
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    if (isCinemaHallPage && isExtensionEnabled) {
+      cinemaMode.toggle();
+    }
+  }
+});
+
+// --- SECTION 10: Initialization ---
+function init() {
+  syncExtensionConfig();
+
+  if (isAppDomain) {
+    syncCredentials();
+    
+    const keepAliveInterval = setInterval(() => {
+      syncCredentials();
+      syncExtensionConfig();
+      
+      const success = safeSendMessage({ type: "KEEP_ALIVE" });
+      if (!success) {
+        clearInterval(keepAliveInterval);
+        console.log("Love Sync: Stopped keep-alive loop due to context invalidation.");
+      }
+    }, 10000);
+
+    setInterval(syncExtensionConfig, 2500);
+  }
+}
+
+// Run init
+init();

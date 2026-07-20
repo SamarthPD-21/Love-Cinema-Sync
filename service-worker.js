@@ -35,11 +35,6 @@ function isCinemaHallUrl(urlStr) {
     const url = new URL(urlStr);
     const host = url.hostname;
 
-    // Support Miruro domains
-    if (host.includes("miruro")) {
-      return true;
-    }
-
     const isAppHost = 
       host === "localhost" ||
       host === "127.0.0.1" ||

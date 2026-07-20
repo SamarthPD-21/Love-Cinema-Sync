@@ -1,0 +1,13 @@
+/* cinema.css */
+
+/* Transition background color for the root document when cinema mode is toggled */
+html[data-love-sync-cinema="active"] body {
+  transition: background 0.3s ease !important;
+}
+
+/* Ensure maximized elements have no border artifacts */
+html[data-love-sync-cinema="active"] [data-love-sync-player] {
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
